@@ -1,0 +1,57 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import { Config, ConfigSchema } from '../types/config.js';
+
+const CONFIG_DIR = join(homedir(), '.claudio');
+const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+
+export function getConfigPath(): string {
+  return CONFIG_FILE;
+}
+
+export function configExists(): boolean {
+  return existsSync(CONFIG_FILE);
+}
+
+export async function loadConfig(): Promise<Config> {
+  if (!existsSync(CONFIG_FILE)) {
+    throw new Error('Config file not found. Run "claudio setup" first.');
+  }
+
+  try {
+    const content = readFileSync(CONFIG_FILE, 'utf-8');
+    const data = JSON.parse(content);
+    return ConfigSchema.parse(data);
+  } catch (error: any) {
+    throw new Error(`Failed to load config: ${error.message}`);
+  }
+}
+
+export async function saveConfig(config: Config): Promise<void> {
+  if (!existsSync(CONFIG_DIR)) {
+    mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+
+  try {
+    const validated = ConfigSchema.parse(config);
+    const content = JSON.stringify(validated, null, 2);
+    writeFileSync(CONFIG_FILE, content, 'utf-8');
+  } catch (error: any) {
+    throw new Error(`Failed to save config: ${error.message}`);
+  }
+}
+
+export async function deleteConfig(): Promise<void> {
+  if (existsSync(CONFIG_FILE)) {
+    unlinkSync(CONFIG_FILE);
+  }
+}
+
+export function getDefaultApiUrl(): string {
+  return 'http://10.114.1.119:8317';
+}
+
+export function getAnthropicApiUrl(): string {
+  return 'https://api.anthropic.com/v1';
+}
