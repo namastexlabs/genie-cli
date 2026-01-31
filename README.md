@@ -4,8 +4,9 @@ Collaborative terminal toolkit for human + AI workflows.
 
 ## Overview
 
-Genie CLI provides two tools for human/AI collaboration:
+Genie CLI provides three tools for human/AI collaboration:
 
+- **genie** - Setup and prerequisites installer
 - **term** - tmux orchestration for managing terminal sessions
 - **claudio** - Claude Code launcher with custom LLM routing profiles
 
@@ -124,6 +125,60 @@ term status my-session --json
 Look for shell prompt in output to detect completion:
 ```bash
 term read my-session -n 10 --json
+```
+
+---
+
+## genie Reference
+
+### Prerequisites Check & Install
+
+```bash
+genie install              # Interactive prerequisite check & install
+genie install --check      # Only check, don't offer to install
+genie install --yes        # Auto-approve all installations
+```
+
+### What It Checks
+
+| Prerequisite | Required | Installation Method |
+|--------------|----------|---------------------|
+| tmux | Yes | brew > apt/dnf/pacman > manual |
+| bun | Yes | Official installer (curl) |
+| claude | No (recommended) | npm global install |
+
+### Example Output
+
+```
+🔧 Genie Prerequisites Check
+
+System: Linux (Ubuntu) (x64)
+Package Manager: apt (brew available)
+
+Checking prerequisites...
+
+  ✅ tmux 3.3a (/usr/bin/tmux)
+  ❌ bun not found
+  ⚠️  claude not found (optional)
+
+Missing: 1 required, 1 optional
+
+────────────────────────────────────────
+
+Install bun? (required)
+  Command: curl -fsSL https://bun.sh/install | bash
+? Proceed [Y/n]: y
+
+Installing bun...
+✅ bun 1.1.0 installed
+
+────────────────────────────────────────
+
+Summary:
+  ✅ All required prerequisites installed
+  ⚠️  1 optional skipped (claude)
+
+Run term --help or claudio --help to get started.
 ```
 
 ---
@@ -286,11 +341,15 @@ When you run `claudio` (or `claudio main`), Claude Code launches in a tmux sessi
 ## Installation
 
 ```bash
+# Check prerequisites first
+genie install
+
 # Build
 bun install
 bun run build
 
 # Symlink to PATH
+ln -s $(pwd)/dist/genie.js ~/.local/bin/genie
 ln -s $(pwd)/dist/term.js ~/.local/bin/term
 ln -s $(pwd)/dist/claudio.js ~/.local/bin/claudio
 ```

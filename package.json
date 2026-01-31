@@ -5,12 +5,13 @@
   "type": "module",
   "bin": {
     "claudio": "./dist/claudio.js",
-    "term": "./dist/term.js"
+    "term": "./dist/term.js",
+    "genie": "./dist/genie.js"
   },
   "scripts": {
     "dev:claudio": "bun --watch src/claudio.ts",
     "dev:term": "bun --watch src/term.ts",
-    "build": "bun build src/claudio.ts src/term.ts --outdir dist --target bun --minify && chmod +x dist/claudio.js dist/term.js",
+    "build": "bun build src/claudio.ts src/term.ts src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
     "prepack": "bun run build"
   },
   "dependencies": {
