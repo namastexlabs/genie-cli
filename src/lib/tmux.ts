@@ -394,3 +394,17 @@ function getEndMarkerText(): string {
     : `${endMarkerPrefix}$?`;
 }
 
+/**
+ * Get the current session ID when running inside tmux
+ */
+export async function getCurrentSessionId(): Promise<string> {
+  return await executeTmux(`display-message -p '#{session_id}'`);
+}
+
+/**
+ * Rename a window
+ */
+export async function renameWindow(windowId: string, newName: string): Promise<void> {
+  await executeTmux(`rename-window -t '${windowId}' '${newName}'`);
+}
+

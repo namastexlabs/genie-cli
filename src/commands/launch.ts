@@ -2,6 +2,8 @@ import { spawn } from 'child_process';
 import { loadConfig, getDefaultProfile, configExists } from '../lib/config.js';
 import * as tmux from '../lib/tmux.js';
 
+const SESSION_NAME = 'genie';
+
 export async function launchProfile(profileName: string): Promise<void> {
   const config = await loadConfig();
   const profile = config.profiles[profileName];
@@ -12,47 +14,9 @@ export async function launchProfile(profileName: string): Promise<void> {
     process.exit(1);
   }
 
-  // Find next available session number
-  const sessions = await tmux.listSessions();
-  const existingNumbers = sessions
-    .filter((s) => s.name.startsWith(`${profileName}-`))
-    .map((s) => {
-      const parts = s.name.split('-');
-      const num = parseInt(parts[parts.length - 1], 10);
-      return isNaN(num) ? 0 : num;
-    })
-    .filter((n) => n > 0);
+  const isInsideTmux = !!process.env.TMUX;
 
-  const nextNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
-  const sessionName = `${profileName}-${nextNumber}`;
-
-  console.log(`🚀 Launching profile "${profileName}" in session "${sessionName}"...`);
-
-  // Create tmux session
-  const session = await tmux.createSession(sessionName);
-  if (!session) {
-    console.error('❌ Failed to create tmux session');
-    process.exit(1);
-  }
-
-  // Get pane ID for the new session
-  const windows = await tmux.listWindows(session.id);
-  if (!windows || windows.length === 0) {
-    console.error('❌ No windows found in session');
-    await tmux.killSession(session.id);
-    process.exit(1);
-  }
-
-  const panes = await tmux.listPanes(windows[0].id);
-  if (!panes || panes.length === 0) {
-    console.error('❌ No panes found in window');
-    await tmux.killSession(session.id);
-    process.exit(1);
-  }
-
-  const paneId = panes[0].id;
-
-  // Set environment variables and start claude
+  // Environment setup command
   const envSetup = [
     `export LC_ALL=C.UTF-8`,
     `export LANG=C.UTF-8`,
@@ -64,24 +28,80 @@ export async function launchProfile(profileName: string): Promise<void> {
     `claude`,
   ].join('; ');
 
-  await tmux.executeCommand(paneId, envSetup);
+  if (isInsideTmux) {
+    // Already inside tmux - just create a new window
+    console.log(`🚀 Opening "${profileName}" in new window...`);
 
-  console.log(`✅ Session "${sessionName}" created`);
-  console.log(`\nAttaching to session...`);
+    // Get current session from $TMUX
+    const currentSession = await tmux.getCurrentSessionId();
 
-  // Attach to session using spawn to properly inherit TTY
-  const child = spawn('tmux', ['attach', '-t', sessionName], {
-    stdio: 'inherit',
-  });
+    // Create new window named after the profile
+    const window = await tmux.createWindow(currentSession, profileName);
+    if (!window) {
+      console.error('❌ Failed to create window');
+      process.exit(1);
+    }
 
-  child.on('error', (error) => {
-    console.error(`❌ Failed to attach to session: ${error.message}`);
-    process.exit(1);
-  });
+    // Get the pane in the new window
+    const panes = await tmux.listPanes(window.id);
+    const paneId = panes[0].id;
 
-  child.on('exit', (code) => {
-    process.exit(code || 0);
-  });
+    // Execute the environment setup and launch claude
+    await tmux.executeCommand(paneId, envSetup);
+
+    console.log(`✅ Window "${profileName}" created`);
+    // No need to attach - already in tmux, auto-switches to new window
+  } else {
+    // Outside tmux - create or reuse "genie" session
+    let session = await tmux.findSessionByName(SESSION_NAME);
+
+    if (session) {
+      // Session exists - add a new window
+      console.log(`🚀 Adding "${profileName}" to session "${SESSION_NAME}"...`);
+
+      const window = await tmux.createWindow(session.id, profileName);
+      if (!window) {
+        console.error('❌ Failed to create window');
+        process.exit(1);
+      }
+
+      const panes = await tmux.listPanes(window.id);
+      await tmux.executeCommand(panes[0].id, envSetup);
+    } else {
+      // No session - create it
+      console.log(`🚀 Creating session "${SESSION_NAME}" with "${profileName}"...`);
+
+      session = await tmux.createSession(SESSION_NAME);
+      if (!session) {
+        console.error('❌ Failed to create tmux session');
+        process.exit(1);
+      }
+
+      // Rename the default window to the profile name
+      const windows = await tmux.listWindows(session.id);
+      await tmux.renameWindow(windows[0].id, profileName);
+
+      const panes = await tmux.listPanes(windows[0].id);
+      await tmux.executeCommand(panes[0].id, envSetup);
+    }
+
+    console.log(`✅ Ready`);
+    console.log(`\nAttaching to session...`);
+
+    // Attach to session
+    const child = spawn('tmux', ['attach', '-t', SESSION_NAME], {
+      stdio: 'inherit',
+    });
+
+    child.on('error', (error) => {
+      console.error(`❌ Failed to attach: ${error.message}`);
+      process.exit(1);
+    });
+
+    child.on('exit', (code) => {
+      process.exit(code || 0);
+    });
+  }
 }
 
 export async function launchDefaultProfile(): Promise<void> {
