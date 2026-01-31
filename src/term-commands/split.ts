@@ -1,6 +1,17 @@
+import { join } from 'path';
 import * as tmux from '../lib/tmux.js';
+import { createWorktreeManager } from '../lib/worktree.js';
 
-export async function splitSessionPane(sessionName: string, direction?: string): Promise<void> {
+export interface SplitOptions {
+  workspace?: string;
+  worktree?: string;
+}
+
+export async function splitSessionPane(
+  sessionName: string,
+  direction?: string,
+  options: SplitOptions = {}
+): Promise<void> {
   try {
     // Find session
     const session = await tmux.findSessionByName(sessionName);
@@ -27,6 +38,32 @@ export async function splitSessionPane(sessionName: string, direction?: string):
     // Determine direction
     const splitDirection = direction === 'h' ? 'horizontal' : 'vertical';
 
+    // Handle workspace and worktree options
+    let workingDir: string | undefined;
+
+    if (options.worktree) {
+      if (!options.workspace) {
+        console.error('❌ --worktree requires --workspace');
+        process.exit(1);
+      }
+
+      const manager = createWorktreeManager({
+        baseDir: join(options.workspace, '.worktrees'),
+        repoPath: options.workspace
+      });
+
+      // Check if worktree exists, create if not
+      const exists = await manager.worktreeExists(options.worktree);
+      if (!exists) {
+        const wt = await manager.createWorktree(options.worktree, true);
+        console.log(`✅ Worktree created at ${wt.path}`);
+      }
+
+      workingDir = manager.getWorktreePath(options.worktree);
+    } else if (options.workspace) {
+      workingDir = options.workspace;
+    }
+
     // Split pane
     const newPane = await tmux.splitPane(paneId, splitDirection);
     if (!newPane) {
@@ -34,7 +71,15 @@ export async function splitSessionPane(sessionName: string, direction?: string):
       process.exit(1);
     }
 
+    // Change to working directory if specified
+    if (workingDir && newPane) {
+      await tmux.executeTmux(`send-keys -t '${newPane.id}' 'cd ${workingDir}' Enter`);
+    }
+
     console.log(`✅ Pane split ${splitDirection}ly in session "${sessionName}"`);
+    if (workingDir) {
+      console.log(`   Working directory: ${workingDir}`);
+    }
   } catch (error: any) {
     console.error(`❌ Error splitting pane: ${error.message}`);
     process.exit(1);
