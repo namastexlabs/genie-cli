@@ -1,6 +1,19 @@
 import * as logReader from '../lib/log-reader.js';
 
-export async function readSessionLogs(sessionName: string, options: any): Promise<void> {
+export interface ReadOptions {
+  lines?: string;
+  from?: string;
+  to?: string;
+  range?: string;
+  search?: string;
+  grep?: string;
+  follow?: boolean;
+  all?: boolean;
+  reverse?: boolean;
+  json?: boolean;
+}
+
+export async function readSessionLogs(sessionName: string, options: ReadOptions): Promise<void> {
   try {
     // Parse options
     const readOptions: logReader.ReadOptions = {
@@ -17,7 +30,7 @@ export async function readSessionLogs(sessionName: string, options: any): Promis
 
     // Handle follow mode
     if (options.follow) {
-      console.log(`📡 Following session "${sessionName}" (Ctrl+C to stop)...`);
+      console.log(`Following session "${sessionName}" (Ctrl+C to stop)...`);
       console.log('');
 
       const stopFollowing = await logReader.followSessionLogs(sessionName, (line) => {
@@ -27,7 +40,7 @@ export async function readSessionLogs(sessionName: string, options: any): Promis
       // Handle Ctrl+C
       process.on('SIGINT', () => {
         stopFollowing();
-        console.log('\n✅ Stopped following');
+        console.log('\nStopped following');
         process.exit(0);
       });
 
@@ -38,9 +51,20 @@ export async function readSessionLogs(sessionName: string, options: any): Promis
 
     // Regular read mode
     const content = await logReader.readSessionLogs(sessionName, readOptions);
+
+    if (options.json) {
+      const lines = content.split('\n');
+      console.log(JSON.stringify({
+        session: sessionName,
+        lineCount: lines.length,
+        content: lines,
+      }, null, 2));
+      return;
+    }
+
     console.log(content);
   } catch (error: any) {
-    console.error(`❌ Error reading session logs: ${error.message}`);
+    console.error(`Error reading session logs: ${error.message}`);
     process.exit(1);
   }
 }

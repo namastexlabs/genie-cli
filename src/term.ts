@@ -10,27 +10,36 @@ import * as execCmd from './term-commands/exec.js';
 import * as sendCmd from './term-commands/send.js';
 import * as splitCmd from './term-commands/split.js';
 import * as hookCmd from './term-commands/hook.js';
+import * as windowCmd from './term-commands/window.js';
+import * as paneCmd from './term-commands/pane.js';
+import * as statusCmd from './term-commands/status.js';
 
 const program = new Command();
 
 program
   .name('term')
-  .description('AI-friendly terminal orchestration (tmux wrapper)')
-  .version('0.1.0');
+  .description(`AI-friendly terminal orchestration (tmux wrapper)
+
+Workflow: new → exec → read → rm
+Full control: window new/ls/rm, pane ls/rm, split, status`)
+  .version('0.2.0');
 
 // Session management
 program
   .command('new <name>')
   .description('Create a new tmux session')
-  .action(async (name: string) => {
-    await newCmd.createNewSession(name);
+  .option('-d, --workspace <path>', 'Working directory for the session')
+  .option('-w, --worktree', 'Create git worktree in .worktrees/<name>/')
+  .action(async (name: string, options: { workspace?: string; worktree?: boolean }) => {
+    await newCmd.createNewSession(name, options);
   });
 
 program
   .command('ls')
   .description('List all tmux sessions')
-  .action(async () => {
-    await lsCmd.listAllSessions();
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    await lsCmd.listAllSessions(options);
   });
 
 program
@@ -43,8 +52,9 @@ program
 program
   .command('rm <name>')
   .description('Remove a tmux session')
-  .action(async (name: string) => {
-    await rmCmd.removeSession(name);
+  .option('--keep-worktree', 'Keep worktree folder when removing session')
+  .action(async (name: string, options: { keepWorktree?: boolean }) => {
+    await rmCmd.removeSession(name, options);
   });
 
 // Log reading (CRITICAL for AI orchestration)
@@ -60,7 +70,8 @@ program
   .option('-f, --follow', 'Follow mode (live tail)')
   .option('--all', 'Export entire scrollback buffer')
   .option('--reverse', 'Reverse chronological (newest first)')
-  .action(async (session: string, options: any) => {
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, options: readCmd.ReadOptions) => {
     await readCmd.readSessionLogs(session, options);
   });
 
@@ -79,12 +90,67 @@ program
     await sendCmd.sendKeysToSession(session, keys);
   });
 
-// Pane management
+// Pane splitting
 program
   .command('split <session> [direction]')
   .description('Split pane in a tmux session (h=horizontal, v=vertical)')
-  .action(async (session: string, direction?: string) => {
-    await splitCmd.splitSessionPane(session, direction);
+  .option('-d, --workspace <path>', 'Working directory for the new pane')
+  .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
+  .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+    await splitCmd.splitSessionPane(session, direction, options);
+  });
+
+// Status command
+program
+  .command('status <session>')
+  .description('Check session state (idle/busy, pane count)')
+  .option('--command <id>', 'Check specific command status')
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, options: statusCmd.StatusOptions) => {
+    await statusCmd.getStatus(session, options);
+  });
+
+// Window management
+const windowProgram = program.command('window').description('Manage tmux windows');
+
+windowProgram
+  .command('new <session> <name>')
+  .description('Create a new window in session')
+  .action(async (session: string, name: string) => {
+    await windowCmd.createWindow(session, name);
+  });
+
+windowProgram
+  .command('ls <session>')
+  .description('List windows in session')
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, options: { json?: boolean }) => {
+    await windowCmd.listWindows(session, options);
+  });
+
+windowProgram
+  .command('rm <window-id>')
+  .description('Remove window by ID')
+  .action(async (windowId: string) => {
+    await windowCmd.removeWindow(windowId);
+  });
+
+// Pane management
+const paneProgram = program.command('pane').description('Manage tmux panes');
+
+paneProgram
+  .command('ls <session>')
+  .description('List all panes in session')
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, options: { json?: boolean }) => {
+    await paneCmd.listPanes(session, options);
+  });
+
+paneProgram
+  .command('rm <pane-id>')
+  .description('Remove pane by ID')
+  .action(async (paneId: string) => {
+    await paneCmd.removePane(paneId);
   });
 
 // Hook management

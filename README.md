@@ -1,54 +1,150 @@
-# Claudio - Claude CLI Wrapper with tmux Orchestration
+# Genie CLI - AI-Friendly Terminal Orchestration
 
-A production-ready CLI application for managing multiple Claude instances with custom model profiles and full tmux control.
+A production-ready CLI for managing tmux sessions with AI agent workflows, plus Claude Code profile management.
 
-## Features
+## Components
 
-- **Custom Model Profiles** - Map opus/sonnet/haiku tiers to any LLM model
-- **tmux Session Management** - Run multiple Claude instances in isolated sessions
-- **Full tmux Control** - 13 commands for session/window/pane management
-- **Vanilla Fallback** - Reset to default Claude behavior with zero config
+### term - Terminal Orchestration
+
+AI-friendly tmux wrapper for session, window, and pane management with JSON output support.
+
+### claudio - Claude Profile Launcher
+
+Launch Claude Code with custom LLM router profiles.
 
 ## Installation
 
 ```bash
-bun install -g @namastexlabs/claudio
+bun install
+bun run build
 ```
 
-## Quick Start
+Symlink to PATH:
+```bash
+ln -s $(pwd)/dist/term.js ~/.local/bin/term
+ln -s $(pwd)/dist/claudio.js ~/.local/bin/genie-claudio
+```
 
-### 1. Setup
+## term CLI
 
-Run the interactive setup wizard:
+### Quick Start
 
 ```bash
-claudio setup
+# Create session
+term new my-session
+
+# Run command
+term exec my-session "npm test"
+
+# Read output
+term read my-session -n 100
+
+# Remove session
+term rm my-session
 ```
 
-You'll be prompted to:
-- Enter your API URL (default: claude-router at 10.114.1.119:8317)
-- Enter your API key
-- Create one or more profiles with model mappings
+### Command Reference
 
-### 2. Launch a Profile
+```
+term
+├── new <name>              Create session (-d workspace, -w worktree)
+├── ls                      List sessions (--json)
+├── attach <name>           Attach interactively
+├── rm <name>               Remove session (--keep-worktree)
+├── read <session>          Read output (-n, --grep, --json)
+├── exec <session> <cmd>    Run command (async)
+├── send <session> <keys>   Send keystrokes
+├── split <session>         Split pane (h/v, -d, -w)
+├── status <session>        Check session state (--command <id>, --json)
+├── window
+│   ├── new <session> <name>
+│   ├── ls <session> (--json)
+│   └── rm <window-id>
+├── pane
+│   ├── ls <session> (--json)
+│   └── rm <pane-id>
+└── hook
+    ├── set <event> <cmd>
+    ├── list
+    └── rm <event>
+```
+
+### Session Management
 
 ```bash
-claudio gemini              # Opens tmux session "gemini-1"
-claudio claude-max          # Opens tmux session "claude-max-1"
-claudio gemini              # Opens second instance "gemini-2"
+term new my-session               # Create detached session
+term new my-session -d /path      # With working directory
+term new my-session -w            # With git worktree
+term ls                           # List sessions
+term ls --json                    # JSON output
+term attach my-session            # Attach interactively
+term rm my-session                # Kill session
 ```
 
-### 3. Vanilla Reset
-
-Clear all configuration and run default Claude:
+### Command Execution
 
 ```bash
-claudio                     # Deletes config, runs vanilla claude
+term exec my-session "npm test"   # Execute command
+term send my-session "q"          # Send keystroke
+term send my-session Enter        # Send Enter key
 ```
 
-## Profile Configuration
+### Log Reading
 
-Each profile maps the three Claude model tiers to specific models:
+```bash
+term read my-session              # Last 100 lines
+term read my-session -n 50        # Last 50 lines
+term read my-session --grep "Error"  # Search pattern
+term read my-session -f           # Follow mode (live tail)
+term read my-session --json       # JSON output
+```
+
+### Window Management
+
+```bash
+term window new my-session main   # Create window
+term window ls my-session         # List windows
+term window ls my-session --json  # JSON output
+term window rm @1                 # Remove by ID
+```
+
+### Pane Management
+
+```bash
+term pane ls my-session           # List all panes
+term pane ls my-session --json    # JSON output
+term pane rm %1                   # Remove by ID
+term split my-session h           # Split horizontal
+term split my-session v           # Split vertical
+```
+
+### Status Checking
+
+```bash
+term status my-session            # Session state
+term status my-session --json     # JSON output
+term status my-session --command <id>  # Check command result
+```
+
+## claudio CLI
+
+### Setup
+
+```bash
+claudio setup                     # Interactive setup wizard
+```
+
+### Launch Profile
+
+```bash
+claudio gemini                    # Launch with "gemini" profile
+claudio claude-max                # Launch with "claude-max" profile
+claudio                           # Clear config, launch vanilla Claude
+```
+
+### Profile Configuration
+
+Profiles map Claude model tiers to specific models:
 
 ```json
 {
@@ -56,101 +152,18 @@ Each profile maps the three Claude model tiers to specific models:
     "opus": "gemini-3-pro-preview",
     "sonnet": "gemini-3-flash-preview",
     "haiku": "gemini-3-flash-preview"
-  },
-  "claude-max": {
-    "opus": "claude-opus-4-5-20251101",
-    "sonnet": "claude-opus-4-5-20251101",
-    "haiku": "claude-opus-4-5-20251101"
   }
 }
 ```
 
 Config file: `~/.claudio/config.json`
 
-## tmux Commands
-
-### Session Management
-
-```bash
-claudio session list                    # List all sessions
-claudio session create test-session     # Create new session
-claudio session kill gemini-1           # Kill session
-claudio session find gemini-1           # Find session by name
-```
-
-### Window Management
-
-```bash
-claudio window list <session-id>                  # List windows
-claudio window create <session-id> <name>         # Create window
-claudio window kill <window-id>                   # Kill window
-```
-
-### Pane Management
-
-```bash
-claudio pane list <window-id>                     # List panes
-claudio pane split <pane-id> --horizontal         # Split pane
-claudio pane split <pane-id> --vertical           # Split pane (default)
-claudio pane kill <pane-id>                       # Kill pane
-claudio pane capture <pane-id> --lines 50         # Capture output
-```
-
-### Command Execution
-
-```bash
-claudio command execute <pane-id> "echo test"     # Execute command
-claudio command execute <pane-id> "vim" --raw     # Raw mode (no tracking)
-claudio command get-result <command-id>           # Get result
-```
-
-## Session Naming
-
-Sessions follow the format `<profile>-<number>`:
-
-- First instance: `gemini-1`
-- Second instance: `gemini-2`
-- Different profile: `claude-max-1`
-
-Numbers auto-increment for multiple sessions with the same profile.
-
-## Requirements
-
-- Bun runtime
-- tmux binary
-- claude CLI (`@anthropic-ai/claude-code`)
-
-## Development
-
-```bash
-# Install dependencies
-bun install
-
-# Development mode (hot reload)
-bun run dev
-
-# Build
-bun run build
-
-# Test locally
-bun link
-claudio setup
-```
-
 ## Architecture
 
 Built on:
 - **Bun** - TypeScript runtime and bundler
 - **Commander.js** - CLI framework
-- **Zod** - Configuration validation
 - **tmux** - Session orchestration
-
-Core components:
-- `config.ts` - Configuration management
-- `tmux.ts` - tmux abstraction (from tmux-mcp)
-- `wizard.ts` - Interactive setup
-- `launch.ts` - Profile launcher
-- Command handlers for all tmux operations
 
 ## License
 
