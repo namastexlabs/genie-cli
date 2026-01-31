@@ -29,28 +29,32 @@ export async function launchProfile(profileName: string): Promise<void> {
   ].join('; ');
 
   if (isInsideTmux) {
-    // Already inside tmux - just create a new window
-    console.log(`🚀 Opening "${profileName}" in new window...`);
+    // Already inside tmux - run directly in current terminal
+    console.log(`🚀 Launching "${profileName}"...`);
 
-    // Get current session from $TMUX
-    const currentSession = await tmux.getCurrentSessionId();
+    // Set environment variables
+    process.env.LC_ALL = 'C.UTF-8';
+    process.env.LANG = 'C.UTF-8';
+    process.env.ANTHROPIC_BASE_URL = config.apiUrl;
+    process.env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = profile.opus;
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = profile.sonnet;
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haiku;
 
-    // Create new window named after the profile
-    const window = await tmux.createWindow(currentSession, profileName);
-    if (!window) {
-      console.error('❌ Failed to create window');
+    // Spawn claude with inherited stdio (replaces this process)
+    const child = spawn('claude', [], {
+      stdio: 'inherit',
+      env: process.env,
+    });
+
+    child.on('error', (error) => {
+      console.error(`❌ Failed to launch: ${error.message}`);
       process.exit(1);
-    }
+    });
 
-    // Get the pane in the new window
-    const panes = await tmux.listPanes(window.id);
-    const paneId = panes[0].id;
-
-    // Execute the environment setup and launch claude
-    await tmux.executeCommand(paneId, envSetup);
-
-    console.log(`✅ Window "${profileName}" created`);
-    // No need to attach - already in tmux, auto-switches to new window
+    child.on('exit', (code) => {
+      process.exit(code || 0);
+    });
   } else {
     // Outside tmux - create or reuse "genie" session
     let session = await tmux.findSessionByName(SESSION_NAME);
