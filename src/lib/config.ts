@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { Config, ConfigSchema } from '../types/config.js';
+import { Config, ConfigSchema, Profile } from '../types/config.js';
 
 const CONFIG_DIR = join(homedir(), '.claudio');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -54,4 +54,56 @@ export function getDefaultApiUrl(): string {
 
 export function getAnthropicApiUrl(): string {
   return 'https://api.anthropic.com/v1';
+}
+
+// Profile CRUD helpers
+
+export async function getDefaultProfile(): Promise<string | undefined> {
+  const config = await loadConfig();
+  return config.defaultProfile;
+}
+
+export async function setDefaultProfile(name: string): Promise<void> {
+  const config = await loadConfig();
+  if (!config.profiles[name]) {
+    throw new Error(`Profile "${name}" not found`);
+  }
+  config.defaultProfile = name;
+  await saveConfig(config);
+}
+
+export async function addProfile(name: string, profile: Profile): Promise<void> {
+  const config = await loadConfig();
+  if (config.profiles[name]) {
+    throw new Error(`Profile "${name}" already exists`);
+  }
+  config.profiles[name] = profile;
+  await saveConfig(config);
+}
+
+export async function removeProfile(name: string): Promise<void> {
+  const config = await loadConfig();
+  if (!config.profiles[name]) {
+    throw new Error(`Profile "${name}" not found`);
+  }
+  delete config.profiles[name];
+  // Clear default if we just deleted it
+  if (config.defaultProfile === name) {
+    config.defaultProfile = undefined;
+  }
+  await saveConfig(config);
+}
+
+export async function listProfiles(): Promise<{ name: string; profile: Profile; isDefault: boolean }[]> {
+  const config = await loadConfig();
+  return Object.entries(config.profiles).map(([name, profile]) => ({
+    name,
+    profile,
+    isDefault: config.defaultProfile === name,
+  }));
+}
+
+export async function getProfile(name: string): Promise<Profile | undefined> {
+  const config = await loadConfig();
+  return config.profiles[name];
 }

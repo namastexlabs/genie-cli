@@ -1,49 +1,136 @@
-# Genie CLI - AI-Friendly Terminal Orchestration
+# Genie CLI
 
-A production-ready CLI for managing tmux sessions with AI agent workflows, plus Claude Code profile management.
+Collaborative terminal toolkit for human + AI workflows.
 
-## Components
+## Overview
 
-### term - Terminal Orchestration
+Genie CLI provides two tools for human/AI collaboration:
 
-AI-friendly tmux wrapper for session, window, and pane management with JSON output support.
+- **term** - tmux orchestration for managing terminal sessions
+- **claudio** - Claude Code launcher with custom LLM routing profiles
 
-### claudio - Claude Profile Launcher
+The core idea: **tmux is the collaboration layer**. AI agents create and manage terminal sessions; humans can attach at any time to watch, assist, or take over. Both work in the same shared workspace.
 
-Launch Claude Code with custom LLM router profiles.
+---
 
-## Installation
+## For Humans
 
+### Watching Agent Work
+
+See what sessions exist:
 ```bash
-bun install
-bun run build
+term ls
 ```
 
-Symlink to PATH:
+Attach to watch an agent's session:
 ```bash
-ln -s $(pwd)/dist/term.js ~/.local/bin/term
-ln -s $(pwd)/dist/claudio.js ~/.local/bin/genie-claudio
+term attach khal-tests
+# or directly with tmux
+tmux attach -t khal-tests
 ```
 
-## term CLI
+Read recent output without attaching:
+```bash
+term read khal-tests -n 200
+```
 
-### Quick Start
+### Taking Control
+
+Once attached, you're in a normal tmux session:
+- Type commands directly
+- Use `Ctrl+B d` to detach
+- The agent can continue working after you detach
+
+### Quick Reference
+
+| Task | Command |
+|------|---------|
+| List sessions | `term ls` |
+| Attach to session | `term attach <name>` |
+| Read output | `term read <name> -n 100` |
+| Follow live | `term read <name> -f` |
+| Kill session | `term rm <name>` |
+
+---
+
+## For AI Agents
+
+### Standard Workflow
 
 ```bash
-# Create session
-term new my-session
+# 1. Create a session
+term new khal-tests -d /path/to/project
 
-# Run command
-term exec my-session "npm test"
+# 2. Execute commands
+term exec khal-tests "npm test"
+
+# 3. Read output (always use --json for parsing)
+term read khal-tests -n 100 --json
+
+# 4. Clean up when done
+term rm khal-tests
+```
+
+### JSON Output
+
+Always use `--json` for reliable parsing:
+
+```bash
+# List sessions
+term ls --json
+# → [{"name":"khal-tests","windows":1,"created":"2025-01-30T10:00:00Z"}]
 
 # Read output
-term read my-session -n 100
+term read khal-tests --json
+# → {"session":"khal-tests","lines":["$ npm test","PASS src/app.test.ts"]}
 
-# Remove session
-term rm my-session
+# Check status
+term status khal-tests --json
+# → {"exists":true,"windows":1,"panes":1}
 ```
 
-### Command Reference
+### Session Naming Convention
+
+Use descriptive names: `<project>-<task>`
+- `khal-tests` - running Khal test suite
+- `khal-deploy` - deployment process
+- `api-build` - building API server
+
+### Parallel Execution
+
+Run multiple tasks in separate windows:
+```bash
+term new project-work -d /path/to/project
+term window new project-work tests
+term window new project-work build
+
+term exec project-work:tests "npm test"
+term exec project-work:build "npm run build"
+```
+
+Or use panes within a window:
+```bash
+term split project-work h  # horizontal split
+term exec project-work "npm test"  # runs in active pane
+```
+
+### Detecting Completion
+
+Check if a command finished:
+```bash
+term status my-session --json
+```
+
+Look for shell prompt in output to detect completion:
+```bash
+term read my-session -n 10 --json
+```
+
+---
+
+## term Reference
+
+### Command Tree
 
 ```
 term
@@ -51,11 +138,11 @@ term
 ├── ls                      List sessions (--json)
 ├── attach <name>           Attach interactively
 ├── rm <name>               Remove session (--keep-worktree)
-├── read <session>          Read output (-n, --grep, --json)
+├── read <session>          Read output (-n, --grep, --json, -f)
 ├── exec <session> <cmd>    Run command (async)
 ├── send <session> <keys>   Send keystrokes
-├── split <session>         Split pane (h/v, -d, -w)
-├── status <session>        Check session state (--command <id>, --json)
+├── split <session> <h|v>   Split pane (-d, -w)
+├── status <session>        Check state (--command <id>, --json)
 ├── window
 │   ├── new <session> <name>
 │   ├── ls <session> (--json)
@@ -69,101 +156,154 @@ term
     └── rm <event>
 ```
 
-### Session Management
+### Common Options
 
-```bash
-term new my-session               # Create detached session
-term new my-session -d /path      # With working directory
-term new my-session -w            # With git worktree
-term ls                           # List sessions
-term ls --json                    # JSON output
-term attach my-session            # Attach interactively
-term rm my-session                # Kill session
+| Option | Description |
+|--------|-------------|
+| `--json` | Output as JSON (essential for agents) |
+| `-n <lines>` | Number of lines to read |
+| `-f` | Follow mode (live tail) |
+| `-d <path>` | Working directory |
+| `-w` | Create git worktree |
+| `--grep <pattern>` | Filter output by pattern |
+
+---
+
+## claudio Reference
+
+### What It Does
+
+claudio launches Claude Code with custom LLM routing profiles. It configures Claude's model mappings so requests for "opus", "sonnet", or "haiku" route to specific models via your configured router.
+
+**Key principle**: `claude` = vanilla Anthropic, `claudio` = your custom router setup.
+
+### When to Use
+
+Use claudio when you need:
+- **Different LLM backends** - Route to Gemini, GPT-4, or other providers
+- **Cost optimization** - Map expensive tiers to cheaper models
+- **Testing** - Compare behavior across different models
+
+**Don't use claudio for**: General terminal work (use `term` instead)
+
+### Command Reference
+
+```
+claudio                     Launch with default profile
+claudio <profile>           Launch with named profile
+
+claudio setup               First-time setup wizard
+claudio profiles            List all profiles (* = default)
+claudio profiles add        Add new profile (interactive picker)
+claudio profiles rm <name>  Delete profile
+claudio profiles default <name>  Set default profile
+claudio profiles show <name>     Show profile details
+
+claudio models              List available models from router
+claudio config              Show current config (URL, default profile)
 ```
 
-### Command Execution
+### Setup Wizard
 
-```bash
-term exec my-session "npm test"   # Execute command
-term send my-session "q"          # Send keystroke
-term send my-session Enter        # Send Enter key
+Run `claudio setup` for first-time configuration:
+
+```
+$ claudio setup
+
+🔧 Claudio Setup
+
+? API URL: http://localhost:8317
+? API Key: ********
+
+Testing connection... ✓ Connected (47 models available)
+
+Create your first profile:
+
+? Profile name: main
+? Select OPUS model: gemini-2.5-pro
+? Select SONNET model: gemini-2.5-flash
+? Select HAIKU model: gemini-2.5-flash
+
+✓ Profile "main" created and set as default
+
+Run `claudio` to launch, or `claudio profiles add` to create more.
 ```
 
-### Log Reading
+The model picker supports type-to-filter search - just start typing to filter through available models.
+
+### Profile Management
 
 ```bash
-term read my-session              # Last 100 lines
-term read my-session -n 50        # Last 50 lines
-term read my-session --grep "Error"  # Search pattern
-term read my-session -f           # Follow mode (live tail)
-term read my-session --json       # JSON output
+# List all profiles
+claudio profiles
+#   main *
+#     opus:   gemini-2.5-pro
+#     sonnet: gemini-2.5-flash
+#     haiku:  gemini-2.5-flash
+#   (* = default)
+
+# Add a new profile
+claudio profiles add
+
+# Set default profile
+claudio profiles default main
+
+# Show profile details
+claudio profiles show main
+
+# Delete a profile
+claudio profiles rm old-profile
 ```
 
-### Window Management
+### Configuration
 
-```bash
-term window new my-session main   # Create window
-term window ls my-session         # List windows
-term window ls my-session --json  # JSON output
-term window rm @1                 # Remove by ID
-```
-
-### Pane Management
-
-```bash
-term pane ls my-session           # List all panes
-term pane ls my-session --json    # JSON output
-term pane rm %1                   # Remove by ID
-term split my-session h           # Split horizontal
-term split my-session v           # Split vertical
-```
-
-### Status Checking
-
-```bash
-term status my-session            # Session state
-term status my-session --json     # JSON output
-term status my-session --command <id>  # Check command result
-```
-
-## claudio CLI
-
-### Setup
-
-```bash
-claudio setup                     # Interactive setup wizard
-```
-
-### Launch Profile
-
-```bash
-claudio gemini                    # Launch with "gemini" profile
-claudio claude-max                # Launch with "claude-max" profile
-claudio                           # Clear config, launch vanilla Claude
-```
-
-### Profile Configuration
-
-Profiles map Claude model tiers to specific models:
+Config lives in `~/.claudio/config.json`:
 
 ```json
 {
-  "gemini": {
-    "opus": "gemini-3-pro-preview",
-    "sonnet": "gemini-3-flash-preview",
-    "haiku": "gemini-3-flash-preview"
+  "apiUrl": "http://localhost:8317",
+  "apiKey": "sk-...",
+  "defaultProfile": "main",
+  "profiles": {
+    "main": {
+      "opus": "gemini-2.5-pro",
+      "sonnet": "gemini-2.5-flash",
+      "haiku": "gemini-2.5-flash"
+    },
+    "gpt4": {
+      "opus": "gpt-4o",
+      "sonnet": "gpt-4o-mini",
+      "haiku": "gpt-4o-mini"
+    }
   }
 }
 ```
 
-Config file: `~/.claudio/config.json`
+When you run `claudio` (or `claudio main`), Claude Code launches in a tmux session with environment variables configured to route model requests through your router.
+
+---
+
+## Installation
+
+```bash
+# Build
+bun install
+bun run build
+
+# Symlink to PATH
+ln -s $(pwd)/dist/term.js ~/.local/bin/term
+ln -s $(pwd)/dist/claudio.js ~/.local/bin/claudio
+```
+
+Requirements: Bun, tmux
+
+---
 
 ## Architecture
 
-Built on:
 - **Bun** - TypeScript runtime and bundler
 - **Commander.js** - CLI framework
-- **tmux** - Session orchestration
+- **tmux** - Session orchestration backend
 
 ## License
 

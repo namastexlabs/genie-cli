@@ -14,6 +14,7 @@
     "prepack": "bun run build"
   },
   "dependencies": {
+    "@inquirer/prompts": "^7.0.0",
     "commander": "^12.1.0",
     "zod": "^3.22.4",
     "uuid": "^11.1.0"

@@ -9,6 +9,7 @@ export const ProfileSchema = z.object({
 export const ConfigSchema = z.object({
   apiUrl: z.string().url(),
   apiKey: z.string().min(1),
+  defaultProfile: z.string().optional(),
   profiles: z.record(ProfileSchema),
 });
 

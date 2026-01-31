@@ -1,9 +1,6 @@
-import { exec as execCallback } from 'child_process';
-import { promisify } from 'util';
-import { loadConfig } from '../lib/config.js';
+import { spawn } from 'child_process';
+import { loadConfig, getDefaultProfile, configExists } from '../lib/config.js';
 import * as tmux from '../lib/tmux.js';
-
-const exec = promisify(execCallback);
 
 export async function launchProfile(profileName: string): Promise<void> {
   const config = await loadConfig();
@@ -72,11 +69,34 @@ export async function launchProfile(profileName: string): Promise<void> {
   console.log(`✅ Session "${sessionName}" created`);
   console.log(`\nAttaching to session...`);
 
-  // Attach to session
-  try {
-    await exec(`tmux attach -t "${sessionName}"`);
-  } catch (error: any) {
+  // Attach to session using spawn to properly inherit TTY
+  const child = spawn('tmux', ['attach', '-t', sessionName], {
+    stdio: 'inherit',
+  });
+
+  child.on('error', (error) => {
     console.error(`❌ Failed to attach to session: ${error.message}`);
     process.exit(1);
+  });
+
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
+}
+
+export async function launchDefaultProfile(): Promise<void> {
+  if (!configExists()) {
+    console.error('❌ No config found. Run `claudio setup` first.');
+    process.exit(1);
   }
+
+  const defaultProfile = await getDefaultProfile();
+
+  if (!defaultProfile) {
+    console.error('❌ No default profile set.');
+    console.log('\nRun `claudio setup` to configure, or use `claudio <profile>` to launch a specific profile.');
+    process.exit(1);
+  }
+
+  await launchProfile(defaultProfile);
 }
