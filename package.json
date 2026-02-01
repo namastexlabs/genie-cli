@@ -1,5 +1,5 @@
 {
-  "name": "genie-cli",
+  "name": "@automagik/genie",
   "version": "0.260201.2219",
   "description": "Dual CLI: claudio (Claude profiles) + term (terminal orchestration)",
   "type": "module",
