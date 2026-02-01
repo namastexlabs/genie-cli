@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { installCommand } from './genie-commands/install.js';
 import { setupCommand, quickSetupCommand } from './genie-commands/setup.js';
+import { updateCommand } from './genie-commands/update.js';
 import {
   showHooksCommand,
   installHooksCommand,
@@ -42,6 +43,12 @@ program
       await setupCommand();
     }
   });
+
+// Update command - pull latest and rebuild
+program
+  .command('update')
+  .description('Update Genie CLI to the latest version')
+  .action(updateCommand);
 
 // Hooks command group - manage Claude Code hooks
 const hooks = program
