@@ -6,11 +6,347 @@ Collaborative terminal toolkit for human + AI workflows.
 
 Genie CLI provides three tools for human/AI collaboration:
 
-- **genie** - Setup and prerequisites installer
+- **genie** - Setup wizard, prerequisites installer, and hook management
 - **term** - tmux orchestration for managing terminal sessions
 - **claudio** - Claude Code launcher with custom LLM routing profiles
 
 The core idea: **tmux is the collaboration layer**. AI agents create and manage terminal sessions; humans can attach at any time to watch, assist, or take over. Both work in the same shared workspace.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Install prerequisites (tmux, bun)
+genie install
+
+# 2. Configure hook presets interactively
+genie setup
+
+# 3. Install hooks into Claude Code
+genie hooks install
+
+# 4. Launch Claude Code with your router profile
+claudio
+
+# 5. Watch the AI work (from another terminal)
+tmux attach -t genie
+```
+
+---
+
+## Configuration Files
+
+Genie uses several configuration files:
+
+| File | Purpose |
+|------|---------|
+| `~/.genie/config.json` | Hook presets and session settings |
+| `~/.claudio/config.json` | LLM routing profiles (API URL, model mappings) |
+| `~/.claude/settings.json` | Claude Code settings (hooks registered here) |
+| `~/.claude/hooks/genie-bash-hook.sh` | Hook script that enforces configured behaviors |
+
+---
+
+## genie Reference
+
+### Prerequisites Check & Install
+
+```bash
+genie install              # Interactive prerequisite check & install
+genie install --check      # Only check, don't offer to install
+genie install --yes        # Auto-approve all installations
+```
+
+#### What It Checks
+
+| Prerequisite | Required | Installation Method |
+|--------------|----------|---------------------|
+| tmux | Yes | brew > apt/dnf/pacman > manual |
+| bun | Yes | Official installer (curl) |
+| claude | No (recommended) | npm global install |
+
+---
+
+### Hook Configuration (genie setup)
+
+Interactive wizard for configuring which hooks to enable:
+
+```bash
+genie setup          # Interactive wizard
+genie setup --quick  # Use recommended defaults (collaborative + audited)
+```
+
+The wizard explains each hook preset and lets you choose which to enable. Configuration is saved to `~/.genie/config.json`.
+
+---
+
+### Hook Management (genie hooks)
+
+```bash
+genie hooks show                 # Show current hook configuration
+genie hooks install              # Install hooks into Claude Code
+genie hooks install --force      # Overwrite existing hooks
+genie hooks uninstall            # Remove hooks from Claude Code
+genie hooks uninstall --keep-script  # Remove but keep the script file
+genie hooks test                 # Test the hook script
+```
+
+#### How Hooks Work
+
+1. `genie setup` saves your preferences to `~/.genie/config.json`
+2. `genie hooks install` creates `~/.claude/hooks/genie-bash-hook.sh` and registers it in `~/.claude/settings.json`
+3. When Claude Code runs, it invokes the hook script for relevant tool calls
+4. The hook script enforces your configured behaviors
+
+---
+
+### Hook Presets
+
+#### Collaborative (Recommended)
+
+**What:** All terminal commands run through tmux
+**Why:** You can watch AI work in real-time
+**How:** Bash commands are rewritten to `term exec genie:shell '<command>'`
+
+When enabled, any Bash tool call the AI makes gets automatically proxied through your tmux session. You can attach and watch:
+
+```bash
+tmux attach -t genie
+```
+
+Configuration options:
+```json
+{
+  "hooks": {
+    "enabled": ["collaborative"],
+    "collaborative": {
+      "sessionName": "genie",
+      "windowName": "shell"
+    }
+  }
+}
+```
+
+#### Supervised
+
+**What:** File changes require your approval
+**Why:** Prevents accidental overwrites
+**How:** Write/Edit tools always ask permission
+
+When enabled, the AI must get your explicit approval before writing or editing files. The default tools that require approval are `Write` and `Edit`.
+
+Configuration options:
+```json
+{
+  "hooks": {
+    "enabled": ["supervised"],
+    "supervised": {
+      "alwaysAsk": ["Write", "Edit"]
+    }
+  }
+}
+```
+
+#### Sandboxed
+
+**What:** Restrict file access to specific directories
+**Why:** Protects sensitive areas of your system
+**How:** Operations outside the sandbox are blocked
+
+When enabled, the AI can only read, write, or search files within the allowed paths. Attempts to access files outside these directories are denied.
+
+Configuration options:
+```json
+{
+  "hooks": {
+    "enabled": ["sandboxed"],
+    "sandboxed": {
+      "allowedPaths": ["~/projects", "/tmp"]
+    }
+  }
+}
+```
+
+#### Audited
+
+**What:** Log all AI tool usage to a file
+**Why:** Review what the AI did after a session
+**How:** Every tool call is logged to `~/.genie/audit.log`
+
+When enabled, all tool executions are recorded in JSONL format with timestamps, inputs, outputs, and duration.
+
+Configuration options:
+```json
+{
+  "hooks": {
+    "enabled": ["audited"],
+    "audited": {
+      "logPath": "~/.genie/audit.log"
+    }
+  }
+}
+```
+
+#### Combining Presets
+
+You can enable multiple presets together:
+
+```json
+{
+  "hooks": {
+    "enabled": ["collaborative", "audited"]
+  }
+}
+```
+
+This gives you real-time observation (collaborative) plus a complete audit trail (audited).
+
+---
+
+## term Reference
+
+### Command Tree
+
+```
+term
+├── new <name>              Create session (-d workspace, -w worktree)
+├── ls                      List sessions (--json)
+├── attach <name>           Attach interactively
+├── rm <name>               Remove session (--keep-worktree)
+├── read <session>          Read output (-n, --grep, --json, -f)
+├── exec <session> <cmd>    Run command (async)
+├── send <session> <keys>   Send keystrokes
+├── split <session> <h|v>   Split pane (-d, -w)
+├── status <session>        Check state (--command <id>, --json)
+├── window
+│   ├── new <session> <name>
+│   ├── ls <session> (--json)
+│   └── rm <window-id>
+├── pane
+│   ├── ls <session> (--json)
+│   └── rm <pane-id>
+└── hook
+    ├── set <event> <cmd>
+    ├── list
+    └── rm <event>
+```
+
+### Common Options
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output as JSON (essential for agents) |
+| `-n <lines>` | Number of lines to read |
+| `-f` | Follow mode (live tail) |
+| `-d <path>` | Working directory |
+| `-w` | Create git worktree |
+| `--grep <pattern>` | Filter output by pattern |
+
+---
+
+## claudio Reference
+
+### What It Does
+
+claudio launches Claude Code with custom LLM routing profiles. It configures Claude's model mappings so requests for "opus", "sonnet", or "haiku" route to specific models via your configured router.
+
+**Key principle**: `claude` = vanilla Anthropic, `claudio` = your custom router setup.
+
+### Command Reference
+
+```
+claudio                     Launch with default profile
+claudio <profile>           Launch with named profile
+
+claudio setup               First-time setup wizard
+claudio profiles            List all profiles (* = default)
+claudio profiles add        Add new profile (interactive picker)
+claudio profiles rm <name>  Delete profile
+claudio profiles default <name>  Set default profile
+claudio profiles show <name>     Show profile details
+
+claudio models              List available models from router
+claudio config              Show current config (URL, default profile)
+```
+
+### Hook Override Flags
+
+```bash
+claudio --hooks collaborative,audited  # Override with specific presets
+claudio --no-hooks                     # Disable all hooks for this session
+```
+
+These flags let you temporarily override your `~/.genie/config.json` settings without changing the configuration file.
+
+### Setup Wizard
+
+Run `claudio setup` for first-time configuration:
+
+```
+$ claudio setup
+
+🔧 Claudio Setup
+
+? API URL: http://localhost:8317
+? API Key: ********
+
+Testing connection... ✓ Connected (47 models available)
+
+Create your first profile:
+
+? Profile name: main
+? Select OPUS model: gemini-2.5-pro
+? Select SONNET model: gemini-2.5-flash
+? Select HAIKU model: gemini-2.5-flash
+
+✓ Profile "main" created and set as default
+
+Run `claudio` to launch, or `claudio profiles add` to create more.
+```
+
+### Profile Management
+
+```bash
+# List all profiles
+claudio profiles
+#   main *
+#     opus:   gemini-2.5-pro
+#     sonnet: gemini-2.5-flash
+#     haiku:  gemini-2.5-flash
+#   (* = default)
+
+# Add a new profile
+claudio profiles add
+
+# Set default profile
+claudio profiles default main
+
+# Show profile details
+claudio profiles show main
+
+# Delete a profile
+claudio profiles rm old-profile
+```
+
+### Configuration
+
+Config lives in `~/.claudio/config.json`:
+
+```json
+{
+  "apiUrl": "http://localhost:8317",
+  "apiKey": "sk-...",
+  "defaultProfile": "main",
+  "profiles": {
+    "main": {
+      "opus": "gemini-2.5-pro",
+      "sonnet": "gemini-2.5-flash",
+      "haiku": "gemini-2.5-flash"
+    }
+  }
+}
+```
 
 ---
 
@@ -25,14 +361,14 @@ term ls
 
 Attach to watch an agent's session:
 ```bash
-term attach khal-tests
+term attach genie
 # or directly with tmux
-tmux attach -t khal-tests
+tmux attach -t genie
 ```
 
 Read recent output without attaching:
 ```bash
-term read khal-tests -n 200
+term read genie -n 200
 ```
 
 ### Taking Control
@@ -129,229 +465,26 @@ term read my-session -n 10 --json
 
 ---
 
-## genie Reference
-
-### Prerequisites Check & Install
-
-```bash
-genie install              # Interactive prerequisite check & install
-genie install --check      # Only check, don't offer to install
-genie install --yes        # Auto-approve all installations
-```
-
-### What It Checks
-
-| Prerequisite | Required | Installation Method |
-|--------------|----------|---------------------|
-| tmux | Yes | brew > apt/dnf/pacman > manual |
-| bun | Yes | Official installer (curl) |
-| claude | No (recommended) | npm global install |
-
-### Example Output
-
-```
-🔧 Genie Prerequisites Check
-
-System: Linux (Ubuntu) (x64)
-Package Manager: apt (brew available)
-
-Checking prerequisites...
-
-  ✅ tmux 3.3a (/usr/bin/tmux)
-  ❌ bun not found
-  ⚠️  claude not found (optional)
-
-Missing: 1 required, 1 optional
-
-────────────────────────────────────────
-
-Install bun? (required)
-  Command: curl -fsSL https://bun.sh/install | bash
-? Proceed [Y/n]: y
-
-Installing bun...
-✅ bun 1.1.0 installed
-
-────────────────────────────────────────
-
-Summary:
-  ✅ All required prerequisites installed
-  ⚠️  1 optional skipped (claude)
-
-Run term --help or claudio --help to get started.
-```
-
----
-
-## term Reference
-
-### Command Tree
-
-```
-term
-├── new <name>              Create session (-d workspace, -w worktree)
-├── ls                      List sessions (--json)
-├── attach <name>           Attach interactively
-├── rm <name>               Remove session (--keep-worktree)
-├── read <session>          Read output (-n, --grep, --json, -f)
-├── exec <session> <cmd>    Run command (async)
-├── send <session> <keys>   Send keystrokes
-├── split <session> <h|v>   Split pane (-d, -w)
-├── status <session>        Check state (--command <id>, --json)
-├── window
-│   ├── new <session> <name>
-│   ├── ls <session> (--json)
-│   └── rm <window-id>
-├── pane
-│   ├── ls <session> (--json)
-│   └── rm <pane-id>
-└── hook
-    ├── set <event> <cmd>
-    ├── list
-    └── rm <event>
-```
-
-### Common Options
-
-| Option | Description |
-|--------|-------------|
-| `--json` | Output as JSON (essential for agents) |
-| `-n <lines>` | Number of lines to read |
-| `-f` | Follow mode (live tail) |
-| `-d <path>` | Working directory |
-| `-w` | Create git worktree |
-| `--grep <pattern>` | Filter output by pattern |
-
----
-
-## claudio Reference
-
-### What It Does
-
-claudio launches Claude Code with custom LLM routing profiles. It configures Claude's model mappings so requests for "opus", "sonnet", or "haiku" route to specific models via your configured router.
-
-**Key principle**: `claude` = vanilla Anthropic, `claudio` = your custom router setup.
-
-### When to Use
-
-Use claudio when you need:
-- **Different LLM backends** - Route to Gemini, GPT-4, or other providers
-- **Cost optimization** - Map expensive tiers to cheaper models
-- **Testing** - Compare behavior across different models
-
-**Don't use claudio for**: General terminal work (use `term` instead)
-
-### Command Reference
-
-```
-claudio                     Launch with default profile
-claudio <profile>           Launch with named profile
-
-claudio setup               First-time setup wizard
-claudio profiles            List all profiles (* = default)
-claudio profiles add        Add new profile (interactive picker)
-claudio profiles rm <name>  Delete profile
-claudio profiles default <name>  Set default profile
-claudio profiles show <name>     Show profile details
-
-claudio models              List available models from router
-claudio config              Show current config (URL, default profile)
-```
-
-### Setup Wizard
-
-Run `claudio setup` for first-time configuration:
-
-```
-$ claudio setup
-
-🔧 Claudio Setup
-
-? API URL: http://localhost:8317
-? API Key: ********
-
-Testing connection... ✓ Connected (47 models available)
-
-Create your first profile:
-
-? Profile name: main
-? Select OPUS model: gemini-2.5-pro
-? Select SONNET model: gemini-2.5-flash
-? Select HAIKU model: gemini-2.5-flash
-
-✓ Profile "main" created and set as default
-
-Run `claudio` to launch, or `claudio profiles add` to create more.
-```
-
-The model picker supports type-to-filter search - just start typing to filter through available models.
-
-### Profile Management
-
-```bash
-# List all profiles
-claudio profiles
-#   main *
-#     opus:   gemini-2.5-pro
-#     sonnet: gemini-2.5-flash
-#     haiku:  gemini-2.5-flash
-#   (* = default)
-
-# Add a new profile
-claudio profiles add
-
-# Set default profile
-claudio profiles default main
-
-# Show profile details
-claudio profiles show main
-
-# Delete a profile
-claudio profiles rm old-profile
-```
-
-### Configuration
-
-Config lives in `~/.claudio/config.json`:
-
-```json
-{
-  "apiUrl": "http://localhost:8317",
-  "apiKey": "sk-...",
-  "defaultProfile": "main",
-  "profiles": {
-    "main": {
-      "opus": "gemini-2.5-pro",
-      "sonnet": "gemini-2.5-flash",
-      "haiku": "gemini-2.5-flash"
-    },
-    "gpt4": {
-      "opus": "gpt-4o",
-      "sonnet": "gpt-4o-mini",
-      "haiku": "gpt-4o-mini"
-    }
-  }
-}
-```
-
-When you run `claudio` (or `claudio main`), Claude Code launches in a tmux session with environment variables configured to route model requests through your router.
-
----
-
 ## Installation
 
 ```bash
-# Check prerequisites first
+# 1. Check prerequisites
 genie install
 
-# Build
+# 2. Build
 bun install
 bun run build
 
-# Symlink to PATH
+# 3. Symlink to PATH
 ln -s $(pwd)/dist/genie.js ~/.local/bin/genie
 ln -s $(pwd)/dist/term.js ~/.local/bin/term
 ln -s $(pwd)/dist/claudio.js ~/.local/bin/claudio
+
+# 4. Configure hooks
+genie setup
+
+# 5. Install hooks into Claude Code
+genie hooks install
 ```
 
 Requirements: Bun, tmux
@@ -360,9 +493,39 @@ Requirements: Bun, tmux
 
 ## Architecture
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Claude Code                             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ ~/.claude/settings.json                                 ││
+│  │   hooks: [{ matcher: "Bash", command: "genie-bash-..." }]││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ PreToolUse / PostToolUse
+┌─────────────────────────────────────────────────────────────┐
+│              ~/.claude/hooks/genie-bash-hook.sh              │
+│                                                              │
+│  Reads: ~/.genie/config.json                                 │
+│  Applies: collaborative, supervised, sandboxed, audited      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+   │ Collaborative │   │   Audited    │   │  Sandboxed   │
+   │               │   │              │   │              │
+   │ Bash → term   │   │ Log to file  │   │ Block paths  │
+   │ exec session  │   │              │   │ outside list │
+   └──────────────┘   └──────────────┘   └──────────────┘
+```
+
+**Components:**
+
 - **Bun** - TypeScript runtime and bundler
 - **Commander.js** - CLI framework
 - **tmux** - Session orchestration backend
+- **Inquirer** - Interactive prompts for setup wizard
 
 ## License
 

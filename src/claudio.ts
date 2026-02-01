@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import { setupCommand } from './commands/setup.js';
-import { launchProfile, launchDefaultProfile } from './commands/launch.js';
+import { launchProfile, launchDefaultProfile, type LaunchOptions } from './commands/launch.js';
 import {
   profilesListCommand,
   profilesAddCommand,
@@ -17,7 +17,9 @@ const program = new Command();
 program
   .name('claudio')
   .description('Launch Claude Code with custom LLM router profiles')
-  .version('0.2.0');
+  .version('0.2.0')
+  .option('--hooks <presets>', 'Override hooks (comma-separated: collaborative,supervised,sandboxed,audited)')
+  .option('--no-hooks', 'Disable all hooks');
 
 // Setup command
 program
@@ -25,6 +27,25 @@ program
   .description('First-time setup wizard')
   .action(async () => {
     await setupCommand();
+  });
+
+// Launch command (explicit)
+program
+  .command('launch [profile]')
+  .description('Launch Claude Code with optional profile')
+  .option('--hooks <presets>', 'Override hooks (comma-separated)')
+  .option('--no-hooks', 'Disable all hooks')
+  .action(async (profile: string | undefined, cmdOptions) => {
+    const options: LaunchOptions = {
+      hooks: cmdOptions.hooks,
+      noHooks: cmdOptions.noHooks,
+    };
+
+    if (profile) {
+      await launchProfile(profile, options);
+    } else {
+      await launchDefaultProfile(options);
+    }
   });
 
 // Profiles command with subcommands
@@ -84,18 +105,24 @@ program
   });
 
 // Handle profile launch (no args = default, or named profile)
+// This is the default action when no command is specified
 program.action(async (options, command) => {
   const args = command.args;
 
+  const launchOptions: LaunchOptions = {
+    hooks: options.hooks,
+    noHooks: options.hooks === false, // --no-hooks sets hooks to false
+  };
+
   if (args.length === 0) {
     // No arguments - launch default profile
-    await launchDefaultProfile();
+    await launchDefaultProfile(launchOptions);
     return;
   }
 
   // Profile name provided - launch named profile
   const profileName = args[0];
-  await launchProfile(profileName);
+  await launchProfile(profileName, launchOptions);
 });
 
 program.parse();

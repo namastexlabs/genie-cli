@@ -9,6 +9,8 @@ import {
   type PrerequisiteStatus,
   type PackageManager,
 } from '../lib/system-detect.js';
+import { genieConfigExists } from '../lib/genie-config.js';
+import { setupCommand } from './setup.js';
 
 export interface InstallOptions {
   check?: boolean;
@@ -197,6 +199,48 @@ async function promptAndInstall(
   }
 }
 
+/**
+ * Prompt to run genie setup after successful installation
+ */
+async function promptForSetup(options: InstallOptions): Promise<void> {
+  // Skip if genie config already exists
+  if (genieConfigExists()) {
+    console.log('\x1b[2m✓ Genie hooks already configured (~/.genie/config.json)\x1b[0m');
+    console.log('  Run \x1b[36mgenie setup\x1b[0m to reconfigure.');
+    console.log();
+    return;
+  }
+
+  console.log();
+  printSeparator();
+  console.log('\x1b[1m🧞 Configure Genie Hooks?\x1b[0m');
+  console.log();
+  console.log('\x1b[2mHooks let you control how AI tools execute - without wasting tokens!\x1b[0m');
+  console.log('\x1b[2mFor example, the "collaborative" hook routes all bash commands through\x1b[0m');
+  console.log('\x1b[2mtmux so you can watch the AI work in real-time.\x1b[0m');
+  console.log();
+
+  let runSetup: boolean;
+  if (options.yes) {
+    runSetup = true;
+    console.log('\x1b[2mAuto-approved with --yes\x1b[0m');
+  } else {
+    runSetup = await confirm({
+      message: 'Would you like to configure genie hooks now?',
+      default: true,
+    });
+  }
+
+  if (runSetup) {
+    console.log();
+    await setupCommand();
+  } else {
+    console.log();
+    console.log('\x1b[2mSkipped. Run \x1b[0m\x1b[36mgenie setup\x1b[0m\x1b[2m anytime to configure hooks.\x1b[0m');
+    console.log();
+  }
+}
+
 export async function installCommand(options: InstallOptions): Promise<void> {
   printHeader();
 
@@ -213,6 +257,10 @@ export async function installCommand(options: InstallOptions): Promise<void> {
   if (missing.length === 0) {
     console.log('\x1b[32m✅ All prerequisites are installed!\x1b[0m');
     console.log();
+
+    // Offer to run setup if not already configured
+    await promptForSetup(options);
+
     console.log(`Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.`);
     console.log();
     return;
@@ -289,6 +337,9 @@ export async function installCommand(options: InstallOptions): Promise<void> {
   console.log();
 
   if (requiredFailed.length === 0) {
+    // Offer to run setup after successful installation
+    await promptForSetup(options);
+
     console.log(`Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.`);
   } else {
     console.log('\x1b[31mSome required prerequisites could not be installed.\x1b[0m');

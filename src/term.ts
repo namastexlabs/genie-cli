@@ -13,6 +13,7 @@ import * as hookCmd from './term-commands/hook.js';
 import * as windowCmd from './term-commands/window.js';
 import * as paneCmd from './term-commands/pane.js';
 import * as statusCmd from './term-commands/status.js';
+import * as shortcutsCmd from './term-commands/shortcuts.js';
 
 const program = new Command();
 
@@ -175,6 +176,17 @@ hookProgram
   .description('Remove a tmux hook')
   .action(async (event: string) => {
     await hookCmd.removeHook(event);
+  });
+
+// Shortcuts command
+program
+  .command('shortcuts')
+  .description('Warp-like keyboard shortcuts for tmux/Termux')
+  .option('--tmux', 'Output tmux.conf snippet')
+  .option('--termux', 'Output termux.properties snippet')
+  .option('--install', 'Install to config files (interactive)')
+  .action(async (options: shortcutsCmd.ShortcutsOptions) => {
+    await shortcutsCmd.handleShortcuts(options);
   });
 
 program.parse();
