@@ -1,6 +1,6 @@
 {
   "name": "@namastexlabs/genie-cli",
-  "version": "0.1.0",
+  "version": "0.260201.2219",
   "description": "Dual CLI: claudio (Claude profiles) + term (terminal orchestration)",
   "type": "module",
   "bin": {
@@ -11,6 +11,8 @@
   "scripts": {
     "dev:claudio": "bun --watch src/claudio.ts",
     "dev:term": "bun --watch src/term.ts",
+    "version": "bun run scripts/version.ts",
+    "prebuild": "bun run version",
     "build": "bun build src/claudio.ts src/term.ts src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
     "prepack": "bun run build"
   },
@@ -30,6 +32,6 @@
     "url": "git+https://github.com/namastexlabs/genie-cli.git"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   }
 }
