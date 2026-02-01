@@ -1,8 +1,45 @@
 import { spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { loadConfig, getDefaultProfile, configExists } from '../lib/config.js';
 import * as tmux from '../lib/tmux.js';
 
 const SESSION_NAME = 'genie';
+
+/**
+ * Get the AGENTS.md system prompt if it exists in the current directory
+ */
+function getAgentsSystemPrompt(): string | null {
+  const agentsPath = join(process.cwd(), 'AGENTS.md');
+  if (existsSync(agentsPath)) {
+    return readFileSync(agentsPath, 'utf-8');
+  }
+  return null;
+}
+
+/**
+ * Get Claude CLI arguments including system prompt if AGENTS.md exists
+ */
+function getClaudeArgs(): string[] {
+  const prompt = getAgentsSystemPrompt();
+  if (prompt) {
+    return ['--system-prompt', prompt];
+  }
+  return [];
+}
+
+/**
+ * Get the Claude command string for shell execution
+ */
+function getClaudeCommand(): string {
+  const prompt = getAgentsSystemPrompt();
+  if (prompt) {
+    // Escape for shell: replace single quotes with '\''
+    const escaped = prompt.replace(/'/g, "'\\''");
+    return `claude --system-prompt '${escaped}'`;
+  }
+  return 'claude';
+}
 
 export async function launchProfile(profileName: string): Promise<void> {
   const config = await loadConfig();
@@ -25,7 +62,7 @@ export async function launchProfile(profileName: string): Promise<void> {
     `export ANTHROPIC_DEFAULT_OPUS_MODEL="${profile.opus}"`,
     `export ANTHROPIC_DEFAULT_SONNET_MODEL="${profile.sonnet}"`,
     `export ANTHROPIC_DEFAULT_HAIKU_MODEL="${profile.haiku}"`,
-    `claude`,
+    getClaudeCommand(),
   ].join('; ');
 
   if (isInsideTmux) {
@@ -42,7 +79,7 @@ export async function launchProfile(profileName: string): Promise<void> {
     process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haiku;
 
     // Spawn claude with inherited stdio (replaces this process)
-    const child = spawn('claude', [], {
+    const child = spawn('claude', getClaudeArgs(), {
       stdio: 'inherit',
       env: process.env,
     });
