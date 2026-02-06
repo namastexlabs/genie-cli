@@ -397,20 +397,27 @@ export async function monitorBatch(
       const batchWorker = workers[wishId];
       if (!batchWorker) continue;
 
-      // Skip terminal and queued workers
-      if (['complete', 'failed', 'cancelled', 'queued'].includes(batchWorker.status)) continue;
+      // Skip terminal, queued, and spawning workers (spawning workers may not be registered yet)
+      if (['complete', 'failed', 'cancelled', 'queued', 'spawning'].includes(batchWorker.status)) continue;
 
       const registeredWorker = await registry.findByTask(wishId);
 
       if (!registeredWorker) {
-        // Worker was unregistered (pane killed) - mark as failed
-        workers[wishId] = {
-          ...batchWorker,
-          status: 'failed',
-          completedAt: new Date().toISOString(),
-        };
-        stateChanged = true;
-        console.log(`  ✖ ${wishId} worker lost`);
+        // Worker was unregistered - could be cleanup after completion or pane killed
+        // Only mark as failed if the worker was still running (not already complete)
+        // Check if worker has been running for at least 5 seconds to avoid race with registration
+        const startedAt = batchWorker.startedAt ? new Date(batchWorker.startedAt).getTime() : 0;
+        const runningLongEnough = Date.now() - startedAt > 5000;
+        
+        if (batchWorker.status === 'running' && runningLongEnough) {
+          workers[wishId] = {
+            ...batchWorker,
+            status: 'failed',
+            completedAt: new Date().toISOString(),
+          };
+          stateChanged = true;
+          console.log(`  ✖ ${wishId} worker lost`);
+        }
         continue;
       }
 
