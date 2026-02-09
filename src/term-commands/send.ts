@@ -1,5 +1,5 @@
 import * as tmux from '../lib/tmux.js';
-import { resolveTarget } from '../lib/target-resolver.js';
+import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 export interface SendOptions {
   enter?: boolean;
@@ -43,22 +43,7 @@ export async function sendKeysToSession(
       // Use target resolver (DEC-1 from wish-26)
       const resolved = await resolveTarget(target);
       paneId = resolved.paneId;
-
-      // Build confirmation label
-      const parts: string[] = [];
-      if (resolved.workerId) {
-        parts.push(resolved.workerId);
-        if (resolved.paneIndex !== undefined && resolved.paneIndex > 0) {
-          parts[parts.length - 1] += `:${resolved.paneIndex}`;
-        }
-      } else {
-        parts.push(target);
-      }
-      const details: string[] = [`pane ${paneId}`];
-      if (resolved.session) {
-        details.push(`session ${resolved.session}`);
-      }
-      resolvedLabel = `${parts[0]} (${details.join(', ')})`;
+      resolvedLabel = formatResolvedLabel(resolved, target);
     }
 
     // Default: enter is true (append Enter key)

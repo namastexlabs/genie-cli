@@ -42,7 +42,7 @@ let tmuxSessions: { name: string; windows: { name: string; panes: { id: string }
 let mockRegistryWorkers: Record<string, any> = {};
 
 // We'll use a module-level approach: import after setting up mocks
-import { resolveTarget, type ResolvedTarget } from './target-resolver.js';
+import { resolveTarget, formatResolvedLabel, type ResolvedTarget } from './target-resolver.js';
 import * as workerRegistry from './worker-registry.js';
 
 // ============================================================================
@@ -620,6 +620,115 @@ describe('ResolvedTarget type', () => {
     });
 
     expect(result.paneIndex).toBe(1);
+  });
+});
+
+// ============================================================================
+// formatResolvedLabel
+// ============================================================================
+
+describe('formatResolvedLabel', () => {
+  test('formats worker target with session', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%17',
+      session: 'genie',
+      workerId: 'bd-42',
+      resolvedVia: 'worker',
+    };
+    expect(formatResolvedLabel(resolved, 'bd-42')).toBe('bd-42 (pane %17, session genie)');
+  });
+
+  test('formats worker:index target', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%22',
+      session: 'genie',
+      workerId: 'bd-42',
+      paneIndex: 1,
+      resolvedVia: 'worker',
+    };
+    expect(formatResolvedLabel(resolved, 'bd-42:1')).toBe('bd-42:1 (pane %22, session genie)');
+  });
+
+  test('formats worker:0 (primary) without suffix', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%17',
+      session: 'genie',
+      workerId: 'bd-42',
+      paneIndex: 0,
+      resolvedVia: 'worker',
+    };
+    expect(formatResolvedLabel(resolved, 'bd-42:0')).toBe('bd-42 (pane %17, session genie)');
+  });
+
+  test('formats session fallback target', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%3',
+      session: 'genie',
+      resolvedVia: 'session',
+    };
+    expect(formatResolvedLabel(resolved, 'genie')).toBe('genie (pane %3, session genie)');
+  });
+
+  test('formats raw pane target without session', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%17',
+      resolvedVia: 'raw',
+    };
+    expect(formatResolvedLabel(resolved, '%17')).toBe('%17 (pane %17)');
+  });
+
+  test('formats raw pane target with derived session', () => {
+    const resolved: ResolvedTarget = {
+      paneId: '%17',
+      session: 'genie',
+      resolvedVia: 'raw',
+    };
+    expect(formatResolvedLabel(resolved, '%17')).toBe('%17 (pane %17, session genie)');
+  });
+});
+
+// ============================================================================
+// Raw pane session derivation
+// ============================================================================
+
+describe('Raw pane session derivation', () => {
+  test('resolveTarget("%17") derives session from pane ID', async () => {
+    const result = await resolveTarget('%17', {
+      checkLiveness: false,
+      deriveSession: async (paneId: string) => {
+        if (paneId === '%17') return 'genie';
+        return null;
+      },
+    });
+
+    expect(result.paneId).toBe('%17');
+    expect(result.session).toBe('genie');
+    expect(result.resolvedVia).toBe('raw');
+  });
+
+  test('resolveTarget("%17") works when session derivation fails', async () => {
+    const result = await resolveTarget('%17', {
+      checkLiveness: false,
+      deriveSession: async () => null,
+    });
+
+    expect(result.paneId).toBe('%17');
+    expect(result.session).toBeUndefined();
+    expect(result.resolvedVia).toBe('raw');
+  });
+
+  test('resolveTarget("%0") derives session for pane %0', async () => {
+    const result = await resolveTarget('%0', {
+      checkLiveness: false,
+      deriveSession: async (paneId: string) => {
+        if (paneId === '%0') return 'main';
+        return null;
+      },
+    });
+
+    expect(result.paneId).toBe('%0');
+    expect(result.session).toBe('main');
+    expect(result.resolvedVia).toBe('raw');
   });
 });
 

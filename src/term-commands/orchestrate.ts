@@ -12,7 +12,7 @@
  */
 
 import * as tmux from '../lib/tmux.js';
-import { resolveTarget } from '../lib/target-resolver.js';
+import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 import {
   EventMonitor,
   ClaudeEvent,
@@ -145,24 +145,11 @@ async function resolveOrcTarget(
   }
 
   const resolved = await resolveTarget(target);
-  const parts: string[] = [];
-  if (resolved.workerId) {
-    parts.push(resolved.workerId);
-    if (resolved.paneIndex !== undefined && resolved.paneIndex > 0) {
-      parts[parts.length - 1] += `:${resolved.paneIndex}`;
-    }
-  } else {
-    parts.push(target);
-  }
-  const details: string[] = [`pane ${resolved.paneId}`];
-  if (resolved.session) {
-    details.push(`session ${resolved.session}`);
-  }
 
   return {
     paneId: resolved.paneId,
     session: resolved.session || target,
-    label: `${parts[0]} (${details.join(', ')})`,
+    label: formatResolvedLabel(resolved, target),
   };
 }
 

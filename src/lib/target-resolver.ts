@@ -53,6 +53,9 @@ export interface ResolveOptions {
 
   /** Custom dead pane cleanup callback (for testing) */
   cleanupDeadPane?: (workerId: string, paneId: string) => Promise<void>;
+
+  /** Custom session derivation from pane ID (for testing) */
+  deriveSession?: (paneId: string) => Promise<string | null>;
 }
 
 // ============================================================================
@@ -119,6 +122,19 @@ async function defaultCleanupDeadPane(workerId: string, paneId: string): Promise
   }
 }
 
+async function defaultDeriveSession(paneId: string): Promise<string | null> {
+  try {
+    const tmux = await import('./tmux.js');
+    const sessionName = await tmux.executeTmux(
+      `display-message -p -t '${paneId}' '#{session_name}'`
+    );
+    const trimmed = sessionName.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================================
 // Core Resolver
 // ============================================================================
@@ -141,6 +157,7 @@ export async function resolveTarget(
     tmuxLookup = defaultTmuxLookup,
     isPaneLive = defaultIsPaneLive,
     cleanupDeadPane = defaultCleanupDeadPane,
+    deriveSession = defaultDeriveSession,
   } = options;
 
   debug(`resolving "${target}"`);
@@ -148,10 +165,6 @@ export async function resolveTarget(
   // ---- Level 1: Raw pane ID (starts with %) ----
   if (target.startsWith('%')) {
     debug(`"${target}" -> raw pane ID passthrough`);
-    const result: ResolvedTarget = {
-      paneId: target,
-      resolvedVia: 'raw',
-    };
 
     if (checkLiveness) {
       const live = await isPaneLive(target);
@@ -162,7 +175,16 @@ export async function resolveTarget(
       }
     }
 
-    return result;
+    // Derive session name from pane ID so downstream consumers (e.g., log-reader)
+    // can look up the session. Best-effort: session is optional.
+    const session = await deriveSession(target);
+    debug(`"${target}" -> derived session: ${session || '(none)'}`);
+
+    return {
+      paneId: target,
+      session: session ?? undefined,
+      resolvedVia: 'raw',
+    };
   }
 
   // ---- Load workers (injected or from registry) ----
@@ -298,6 +320,36 @@ export async function resolveTarget(
     `Target "${target}" not found. Not a worker, tmux session, or pane ID.\n` +
     `Run 'term workers' to list workers or 'term session ls' to list sessions.`
   );
+}
+
+// ============================================================================
+// Label formatting (shared by exec, send, orchestrate)
+// ============================================================================
+
+/**
+ * Format a human-readable label from a resolved target.
+ *
+ * Examples:
+ *   worker "bd-42" pane %17, session "genie"  -> "bd-42 (pane %17, session genie)"
+ *   worker "bd-42:1" pane %22, session "genie" -> "bd-42:1 (pane %22, session genie)"
+ *   session fallback "genie" pane %3           -> "genie (pane %3, session genie)"
+ *   raw pane "%17"                             -> "%17 (pane %17)"
+ */
+export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: string): string {
+  const parts: string[] = [];
+  if (resolved.workerId) {
+    parts.push(resolved.workerId);
+    if (resolved.paneIndex !== undefined && resolved.paneIndex > 0) {
+      parts[parts.length - 1] += `:${resolved.paneIndex}`;
+    }
+  } else {
+    parts.push(originalTarget);
+  }
+  const details: string[] = [`pane ${resolved.paneId}`];
+  if (resolved.session) {
+    details.push(`session ${resolved.session}`);
+  }
+  return `${parts[0]} (${details.join(', ')})`;
 }
 
 // ============================================================================

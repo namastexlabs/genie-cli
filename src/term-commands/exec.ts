@@ -1,6 +1,6 @@
 import * as tmux from '../lib/tmux.js';
 import { getTerminalConfig } from '../lib/genie-config.js';
-import { resolveTarget } from '../lib/target-resolver.js';
+import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 export interface ExecOptions {
   quiet?: boolean;
@@ -46,22 +46,7 @@ export async function executeInSession(
       // Use target resolver (DEC-1 from wish-26)
       const resolved = await resolveTarget(target);
       paneId = resolved.paneId;
-
-      // Build confirmation label
-      const parts: string[] = [];
-      if (resolved.workerId) {
-        parts.push(resolved.workerId);
-        if (resolved.paneIndex !== undefined && resolved.paneIndex > 0) {
-          parts[parts.length - 1] += `:${resolved.paneIndex}`;
-        }
-      } else {
-        parts.push(target);
-      }
-      const details: string[] = [`pane ${paneId}`];
-      if (resolved.session) {
-        details.push(`session ${resolved.session}`);
-      }
-      resolvedLabel = `${parts[0]} (${details.join(', ')})`;
+      resolvedLabel = formatResolvedLabel(resolved, target);
     }
 
     // Use config default if no timeout specified
