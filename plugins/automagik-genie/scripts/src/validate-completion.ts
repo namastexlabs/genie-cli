@@ -15,15 +15,28 @@
 
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { parseArgs } from "util";
+import { parseArgs as _parseArgs } from "util";
 
-const { values } = parseArgs({
-  args: process.argv.slice(2),
-  options: {
-    help: { type: "boolean", short: "h" },
-  },
-  strict: false,
-});
+// Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
+let values: Record<string, unknown> = {};
+try {
+  const result = _parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      help: { type: "boolean", short: "h" },
+    },
+    strict: false,
+  });
+  values = result.values;
+} catch {
+  // Fallback: manual arg parsing for Node < 18.3
+  const args = process.argv.slice(2);
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      values.help = true;
+    }
+  }
+}
 
 if (values.help) {
   console.log(`
@@ -95,8 +108,8 @@ function findWishes(baseDir: string): WishStatus[] {
         totalGroups,
       });
     }
-  } catch {
-    // Silent failure - don't block session end
+  } catch (error) {
+    console.error(`[validate-completion] Error finding wishes: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return results;

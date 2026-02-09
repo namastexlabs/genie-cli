@@ -13,17 +13,31 @@
  */
 
 import { readFileSync, existsSync } from "fs";
-import { parseArgs } from "util";
+import { parseArgs as _parseArgs } from "util";
 
-// Parse CLI args using Node.js built-in parseArgs (Node 18+)
-const { values } = parseArgs({
-  args: process.argv.slice(2),
-  options: {
-    file: { type: "string", short: "f" },
-    help: { type: "boolean", short: "h" },
-  },
-  strict: false, // allow unknown flags from hook runner
-});
+// Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
+let values: Record<string, unknown> = {};
+try {
+  const result = _parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      file: { type: "string", short: "f" },
+      help: { type: "boolean", short: "h" },
+    },
+    strict: false, // allow unknown flags from hook runner
+  });
+  values = result.values;
+} catch {
+  // Fallback: manual arg parsing for Node < 18.3
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === "--file" || args[i] === "-f") && args[i + 1]) {
+      values.file = args[++i];
+    } else if (args[i] === "--help" || args[i] === "-h") {
+      values.help = true;
+    }
+  }
+}
 
 if (values.help) {
   console.log(`
@@ -56,7 +70,7 @@ function getFilePath(): string | null {
     return values.file as string;
   }
 
-  // Try reading stdin (non-blocking) for hook JSON input
+  // Try reading stdin (blocking call - waits for stream to close) for hook JSON input
   try {
     const stdinData = readFileSync(0, "utf-8").trim();
     if (stdinData) {

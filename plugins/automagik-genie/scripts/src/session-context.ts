@@ -13,15 +13,28 @@
 
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { parseArgs } from "util";
+import { parseArgs as _parseArgs } from "util";
 
-const { values } = parseArgs({
-  args: process.argv.slice(2),
-  options: {
-    help: { type: "boolean", short: "h" },
-  },
-  strict: false,
-});
+// Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
+let values: Record<string, unknown> = {};
+try {
+  const result = _parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      help: { type: "boolean", short: "h" },
+    },
+    strict: false,
+  });
+  values = result.values;
+} catch {
+  // Fallback: manual arg parsing for Node < 18.3
+  const args = process.argv.slice(2);
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      values.help = true;
+    }
+  }
+}
 
 if (values.help) {
   console.log(`
@@ -58,13 +71,6 @@ function extractTitle(content: string): string {
 
 function findCurrentGroup(content: string): string | null {
   // Find the first group with unchecked criteria
-  const groupRegex = /^###\s+(Group\s+[A-Z]:\s*.+)/gm;
-  const criteriaRegex = /^-\s+\[\s+\]/gm;
-  const checkedRegex = /^-\s+\[x\]/gim;
-
-  let match;
-  let lastGroupName: string | null = null;
-
   const lines = content.split("\n");
   let inGroup = false;
   let currentGroupName: string | null = null;
@@ -152,8 +158,8 @@ function scanWishes(baseDir: string): WishContext[] {
         hasBlocked,
       });
     }
-  } catch {
-    // Silent failure
+  } catch (error) {
+    console.error(`[session-context] Error scanning wishes: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return results;
