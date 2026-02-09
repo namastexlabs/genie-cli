@@ -87,12 +87,12 @@ The system already creates a dedicated tmux window per worker (`ensureWorkerWind
 **Goal:** Make close/kill use session-qualified window IDs for reliable cleanup.
 
 **Deliverables:**
-- `src/lib/tmux.ts`: Add `killWindowById(sessionId, windowId)` helper that uses session-qualified targeting
+- `src/lib/tmux.ts`: Add `killWindowQualified(sessionId, windowId)` helper that uses session-qualified targeting
 - `src/term-commands/close.ts`: Use `windowId` + session for kill when available, fall back to name
 - `src/term-commands/kill.ts`: Use `windowId` + session for kill when available, fall back to name
 
 **Acceptance Criteria:**
-- [ ] `killWindowById()` uses session-qualified target: `kill-window -t '$sessionId:$windowId'`
+- [ ] `killWindowQualified()` uses session-qualified target: `kill-window -t '$sessionId:$windowId'`
 - [ ] `close.ts` prefers `windowId` over `windowName` when both exist
 - [ ] `kill.ts` prefers `windowId` over `windowName` when both exist
 - [ ] Workers without `windowId` still close/kill cleanly (backward compat fallback)

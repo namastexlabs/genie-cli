@@ -227,7 +227,6 @@ export async function killWindow(windowId: string): Promise<void> {
 /**
  * Kill a tmux window using session-qualified targeting.
  * Uses `sessionId:windowId` format to avoid ambiguity across sessions.
- * Falls back to name-based kill if session ID not provided.
  */
 export async function killWindowQualified(
   sessionId: string,

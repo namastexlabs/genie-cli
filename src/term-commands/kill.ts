@@ -160,7 +160,12 @@ export async function killCommand(
       try {
         const sessionObj = await tmux.findSessionByName(worker.session);
         if (sessionObj) {
-          await tmux.killWindowQualified(sessionObj.id, worker.windowId);
+          try {
+            await tmux.killWindowQualified(sessionObj.id, worker.windowId);
+          } catch {
+            // Session-qualified kill failed (window may have moved) — fallback to direct kill
+            await tmux.killWindow(worker.windowId);
+          }
         } else {
           // Session gone — try direct window kill as fallback
           await tmux.killWindow(worker.windowId);
