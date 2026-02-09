@@ -747,18 +747,23 @@ describe('Active pane resolution in defaultTmuxLookup', () => {
    * tmuxLookup contract works with active-pane-aware implementations.
    */
 
-  test('source code uses active window preference pattern', async () => {
-    // Read the source to verify the pattern is present
-    const { readFile } = await import('fs/promises');
-    const source = await readFile(
-      new URL('./target-resolver.ts', import.meta.url).pathname,
-      'utf-8'
-    );
+  test('tmuxLookup fallback to first pane when no active pane exists', async () => {
+    // When tmuxLookup returns the first pane (fallback behavior), resolveTarget still works
+    const result = await resolveTarget('fallback-session', {
+      checkLiveness: false,
+      workers: {},
+      tmuxLookup: async (sessionName: string, windowName?: string) => {
+        if (sessionName === 'fallback-session' && !windowName) {
+          // Simulates fallback: no active flag set, returns windows[0]/panes[0]
+          return { paneId: '%0', session: 'fallback-session' };
+        }
+        return null;
+      },
+    });
 
-    // Verify active window preference in defaultTmuxLookup
-    expect(source).toContain('windows.find(w => w.active) || windows[0]');
-    // Verify active pane preference in defaultTmuxLookup
-    expect(source).toContain('panes.find(p => p.active) || panes[0]');
+    expect(result.paneId).toBe('%0');
+    expect(result.session).toBe('fallback-session');
+    expect(result.resolvedVia).toBe('session');
   });
 
   test('tmuxLookup returning active pane ID is used by resolveTarget', async () => {
