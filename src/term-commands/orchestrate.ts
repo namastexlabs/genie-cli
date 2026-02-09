@@ -109,13 +109,15 @@ async function getSessionPaneForStart(
     process.exit(1);
   }
 
-  const panes = await tmux.listPanes(windows[0].id);
+  const activeWindow = windows.find(w => w.active) || windows[0];
+  const panes = await tmux.listPanes(activeWindow.id);
   if (!panes || panes.length === 0) {
     console.error(`No panes found in session "${sessionName}"`);
     process.exit(1);
   }
 
-  return { session, paneId: panes[0].id };
+  const activePane = panes.find(p => p.active) || panes[0];
+  return { session, paneId: activePane.id };
 }
 
 /**
@@ -220,14 +222,16 @@ export async function startSession(
       console.log(`Session "${sessionName}" already exists`);
     }
 
-    // Get pane (use specified pane or default to first pane)
+    // Get pane (use specified pane or default to active pane)
     let paneId: string;
     if (options.pane) {
       paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
     } else {
       const windows = await tmux.listWindows(session.id);
-      const panes = await tmux.listPanes(windows[0].id);
-      paneId = panes[0].id;
+      const activeWindow = windows.find(w => w.active) || windows[0];
+      const panes = await tmux.listPanes(activeWindow.id);
+      const activePane = panes.find(p => p.active) || panes[0];
+      paneId = activePane.id;
     }
 
     // Start Claude Code (or custom command)
