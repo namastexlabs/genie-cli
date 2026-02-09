@@ -65,38 +65,32 @@ Present the design in small sections (200-300 words each). Check after each sect
 - Key decisions with rationale
 - Risks and mitigations
 
-### 6. Write Handoff Document
+### 6. Finalize and Handoff
 
-Once the user approves the design, write the handoff artifact:
+Once the user approves the design, choose one of the following options.
 
-1. **Choose a slug** — short, kebab-case name for the design (e.g., `auth-redesign`, `pdf-export`)
+**Option A: Write Handoff & Plan with `/wish`**
+For most ideas, write the handoff artifact:
+1. **Choose a slug** — short, kebab-case name (e.g., `auth-redesign`, `pdf-export`)
 2. **Create the directory:** `.genie/brainstorms/<slug>/`
 3. **Write `design.md`** using the template at `references/design-template.md`
-4. **Fill in every section** — Problem, Solution, Scope IN/OUT, Key Decisions, Risks, Success Definition
-5. **Set status to `VALIDATED`** — signals the design is ready for `/wish`
-
-```
-mkdir -p .genie/brainstorms/<slug>
-# Write design.md following references/design-template.md
-```
-
-**After writing the handoff:**
-
-**Option A: Continue to structured planning**
+4. **Fill all sections** — Problem, Solution, Scope IN/OUT, Key Decisions, Risks, Success Definition
+5. **Set status to `VALIDATED`**
+6. Respond with:
 ```
 "Design written to .genie/brainstorms/<slug>/design.md.
 Run /wish to create structured execution plan."
 ```
 
-**Option B: Quick implementation (small scope)**
-If the design is small enough to implement directly:
+**Option B: Write Handoff & Implement Directly**
+For small ideas that still warrant a document. Follow steps 1-5 from Option A, then respond:
 ```
 "Design written to .genie/brainstorms/<slug>/design.md.
 This is small enough to implement directly. Proceed?"
 ```
 
-**Option C: Skip handoff (trivial ideas)**
-For quick explorations that won't need `/wish`, skip the document:
+**Option C: Skip Handoff**
+For trivial ideas or quick explorations that won't need `/wish`. No document needed:
 ```
 "Design validated verbally. Too small for a formal handoff. Proceed directly?"
 ```
