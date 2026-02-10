@@ -962,12 +962,12 @@ export async function workCommand(
               console.error(`❌ Issue "${target}" lookup failed — beads database needs migration.`);
               console.error(`   Error: ${bdDiag.split('\n')[0]}`);
               console.error(`   Fix: Run \`bd migrate --update-repo-id\``);
-              console.error(`   Workaround: Retry with inline mode:`);
-              console.error(`     term work ${target} --inline`);
+              console.error(`   TIP: Retry with \`term work ${target} --inline\` to bypass beads tracking.`);
             } else {
               console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
               if (bdDiagExit !== 0 && bdDiag) {
                 console.error(`   bd error: ${bdDiag.split('\n')[0]}`);
+                console.error(`   TIP: Retry with \`term work ${target} --inline\` to bypass beads tracking.`);
               }
             }
           }
@@ -1116,13 +1116,14 @@ export async function workCommand(
             console.error(`   • Run \`bd migrate\` to update the database`);
             console.error(`   • Run \`bd sync\` to re-sync`);
             console.error(`   • Or retry with: \`term work ${taskId} --inline\``);
-            console.error(`\n   Falling back to inline mode (no beads tracking)...`);
+            console.error(`\n⚠️ [DEGRADED] Beads claim failed. Falling back to inline mode (no beads tracking).`);
             // Auto-fallback: continue without beads claim
             options.inline = true;
           } else {
             console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
             console.error(`   The issue may not exist or is already claimed.`);
             console.error(`   Run \`bd show ${taskId}\` to check status.`);
+            console.error(`   TIP: Retry with \`term work ${taskId} --inline\` to bypass beads tracking.`);
             process.exit(1);
           }
         } else {
