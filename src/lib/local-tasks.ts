@@ -154,8 +154,15 @@ export async function getQueue(repoPath: string): Promise<{ ready: string[]; blo
   return { ready, blocked };
 }
 
+/** Guard against prototype pollution — reject dangerous property names */
+function isSafeKey(key: string): boolean {
+  return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
+}
+
 export async function claimTask(repoPath: string, id: string): Promise<boolean> {
+  if (!isSafeKey(id)) return false;
   const file = await loadTasks(repoPath);
+  if (!Object.prototype.hasOwnProperty.call(file.tasks, id)) return false;
   const t = file.tasks[id];
   if (!t) return false;
 

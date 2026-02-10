@@ -147,6 +147,39 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
 }
 
 /**
+ * Validate and sanitize a task ID for safe use in shell commands, git branch names, and file paths.
+ * Returns the sanitized ID or null if the input is fundamentally unsafe.
+ */
+function sanitizeTaskId(raw: string): string | null {
+  if (!raw || raw.length > 128) return null;
+  // Strip leading/trailing whitespace
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Only allow alphanumeric, hyphens, underscores, dots, and slashes (for bd-style IDs like "genie-8bu")
+  // Reject anything that could be shell metacharacters or git-invalid
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(trimmed)) return null;
+  // Reject prototype pollution keys
+  if (trimmed === '__proto__' || trimmed === 'constructor' || trimmed === 'prototype') return null;
+  // Reject git-invalid patterns (double dots, trailing dots/slashes, lock suffix)
+  if (/\.\./.test(trimmed) || /[./]$/.test(trimmed) || /\.lock$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * Parse raw beads issue JSON into a BeadsIssue object.
+ */
+function parseBeadsIssue(data: any): BeadsIssue | null {
+  if (!data) return null;
+  return {
+    id: data.id,
+    title: data.title || data.description?.substring(0, 50) || 'Untitled',
+    status: data.status,
+    description: data.description,
+    blockedBy: data.blockedBy || [],
+  };
+}
+
+/**
  * Get a beads issue by ID.
  * If bd show fails (LEGACY DATABASE, etc.), tries bd list as fallback.
  */
@@ -156,17 +189,9 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
   if (exitCode === 0 && stdout) {
     try {
       const parsed = JSON.parse(stdout);
-      // bd show --json returns an array with single element
       const issue = Array.isArray(parsed) ? parsed[0] : parsed;
-      if (issue) {
-        return {
-          id: issue.id,
-          title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
-          status: issue.status,
-          description: issue.description,
-          blockedBy: issue.blockedBy || [],
-        };
-      }
+      const result = parseBeadsIssue(issue);
+      if (result) return result;
     } catch {
       // JSON parse failed — fall through to fallback
     }
@@ -181,15 +206,7 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
       const match = (Array.isArray(issues) ? issues : []).find(
         (i: any) => i.id === id || String(i.id) === id
       );
-      if (match) {
-        return {
-          id: match.id,
-          title: match.title || match.description?.substring(0, 50) || 'Untitled',
-          status: match.status,
-          description: match.description,
-          blockedBy: match.blockedBy || [],
-        };
-      }
+      if (match) return parseBeadsIssue(match);
     }
   } catch {
     // Both show and list failed
@@ -911,6 +928,16 @@ export async function workCommand(
       console.error('❌ `term work wish` is not yet implemented. Coming in Phase 1.5.');
       process.exit(1);
     } else {
+      // Validate and sanitize target ID before using in shell/git/file operations
+      const sanitized = sanitizeTaskId(target);
+      if (!sanitized) {
+        console.error(`❌ Invalid task ID: "${target}"`);
+        console.error(`   Task IDs must be alphanumeric with hyphens/underscores (e.g., "bd-123", "wish-1").`);
+        console.error(`   Got characters that are unsafe for git branches or shell commands.`);
+        process.exit(1);
+      }
+      target = sanitized;
+
       // Check local backend first, then fall back to beads
       const backend = getBackend(repoPath);
       if (backend.kind === 'local') {
@@ -1107,18 +1134,25 @@ export async function workCommand(
 
       if (!claimed) {
         if (backend.kind === 'beads') {
-          // Check if bd itself is broken (LEGACY DATABASE, etc.)
+          // Check if bd itself is broken — only auto-fallback on known migration errors
           const { stdout: bdCheck, exitCode: bdExit } = await runBd(['show', taskId]);
-          if (bdExit !== 0 && bdCheck) {
+          const isLegacyDb = bdCheck && (bdCheck.includes('LEGACY') || bdCheck.includes('legacy database'));
+          if (bdExit !== 0 && isLegacyDb) {
+            // Known migration issue — safe to auto-fallback
             console.error(`⚠️  Failed to claim ${taskId} via beads:`);
             console.error(`   ${bdCheck.split('\n')[0]}`);
             console.error(`\n   Possible fixes:`);
             console.error(`   • Run \`bd migrate\` to update the database`);
             console.error(`   • Run \`bd sync\` to re-sync`);
-            console.error(`   • Or retry with: \`term work ${taskId} --inline\``);
             console.error(`\n⚠️ [DEGRADED] Beads claim failed. Falling back to inline mode (no beads tracking).`);
             // Auto-fallback: continue without beads claim
             options.inline = true;
+          } else if (bdExit !== 0 && bdCheck) {
+            // Unknown bd error — do NOT auto-fallback (could create untracked duplicates)
+            console.error(`❌ Failed to claim ${taskId} via beads:`);
+            console.error(`   ${bdCheck.split('\n')[0]}`);
+            console.error(`   TIP: Retry with \`term work ${taskId} --inline\` to bypass beads tracking.`);
+            process.exit(1);
           } else {
             console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
             console.error(`   The issue may not exist or is already claimed.`);

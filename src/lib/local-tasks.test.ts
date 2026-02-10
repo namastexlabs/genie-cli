@@ -13,6 +13,7 @@ import {
   getTask,
   listTasks,
   isLocalTasksEnabled,
+  markDone,
 } from './local-tasks.js';
 
 let tempDir: string;
@@ -123,7 +124,6 @@ describe('claimTask', () => {
     const task = await createWishTask(tempDir, 'Done task');
 
     // Manually set to done
-    const { markDone } = await import('./local-tasks.js');
     await markDone(tempDir, task.id);
 
     const result = await claimTask(tempDir, task.id);
