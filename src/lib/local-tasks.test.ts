@@ -48,6 +48,21 @@ describe('ensureTasksFile', () => {
     expect(created).toBe(false);
   });
 
+  it('should throw with clear message on read-only directory', async () => {
+    const { chmod } = await import('fs/promises');
+    const readOnlyDir = join(tempDir, 'readonly-repo');
+    await mkdir(readOnlyDir, { recursive: true });
+    // Make directory read-only
+    await chmod(readOnlyDir, 0o444);
+
+    try {
+      await expect(ensureTasksFile(readOnlyDir)).rejects.toThrow(/read-only|EACCES|EROFS|permission/i);
+    } finally {
+      // Restore permissions for cleanup
+      await chmod(readOnlyDir, 0o755);
+    }
+  });
+
   it('should preserve existing tasks.json content', async () => {
     // Create a task first
     await mkdir(join(tempDir, '.genie'), { recursive: true });

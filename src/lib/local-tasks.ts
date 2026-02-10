@@ -180,9 +180,21 @@ export async function ensureTasksFile(repoPath: string): Promise<boolean> {
     await readFile(fp, 'utf-8');
     return false; // already exists
   } catch {
-    await ensureGenieDir(repoPath);
-    await saveTasks(repoPath, { tasks: {}, order: [], lastUpdated: new Date().toISOString() });
-    return true;
+    try {
+      await ensureGenieDir(repoPath);
+      await saveTasks(repoPath, { tasks: {}, order: [], lastUpdated: new Date().toISOString() });
+      return true;
+    } catch (err: any) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EROFS') {
+        throw new Error(
+          `Cannot create .genie/tasks.json — directory is read-only (${code}).\n` +
+          `   Path: ${fp}\n` +
+          `   Fix: Check permissions on ${getRepoGenieDir(repoPath)}`
+        );
+      }
+      throw err;
+    }
   }
 }
 
