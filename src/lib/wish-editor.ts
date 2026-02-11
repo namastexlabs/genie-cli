@@ -39,7 +39,7 @@ export interface WishDocument {
 export interface WishSection {
   /** Section heading (without #) */
   heading: string;
-  /** Section content (including the heading line) */
+  /** Section content (including the heading line and nested subsections) */
   content: string;
   /** Line offset in the document */
   startLine: number;
@@ -50,14 +50,30 @@ export interface WishSection {
 }
 
 // ============================================================================
+// Slug Validation
+// ============================================================================
+
+/**
+ * Validate a slug to prevent path traversal attacks.
+ * Slugs must be simple directory names — no slashes, backslashes, or ".." sequences.
+ */
+export function validateSlug(slug: string): void {
+  if (slug.includes('..') || slug.includes('/') || slug.includes('\\') || slug.includes('\0')) {
+    throw new Error(`Invalid wish slug "${slug}": must not contain path traversal characters (.. / \\)`);
+  }
+}
+
+// ============================================================================
 // Path Utilities
 // ============================================================================
 
 export function getWishPath(repoPath: string, slug: string): string {
+  validateSlug(slug);
   return join(repoPath, '.genie', 'wishes', slug, 'wish.md');
 }
 
 export function getWishDir(repoPath: string, slug: string): string {
+  validateSlug(slug);
   return join(repoPath, '.genie', 'wishes', slug);
 }
 
@@ -68,17 +84,24 @@ export function getWishDir(repoPath: string, slug: string): string {
 /**
  * Parse markdown content into sections by headings.
  * Handles # through #### levels. Code blocks with # are ignored.
+ *
+ * Section boundaries: a section runs from its heading until the next heading
+ * of the same or higher level (lower number). Child headings (deeper nesting)
+ * are included in the parent section's content.
+ *
+ * Example: ## Overview ... ### Details ... ## Next
+ *   → "Overview" section includes "### Details" content
+ *   → "Details" section is its own entry too
  */
 export function parseSections(content: string): WishSection[] {
   const lines = content.split('\n');
-  const sections: WishSection[] = [];
-  let currentSection: Partial<WishSection> | null = null;
+  const headings: Array<{ heading: string; level: number; startLine: number }> = [];
   let inCodeBlock = false;
 
+  // First pass: find all headings
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Track code fences to avoid matching # inside code blocks
     if (line.trimStart().startsWith('```')) {
       inCodeBlock = !inCodeBlock;
       continue;
@@ -86,30 +109,34 @@ export function parseSections(content: string): WishSection[] {
     if (inCodeBlock) continue;
 
     const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
-
     if (headingMatch) {
-      // Close previous section
-      if (currentSection) {
-        currentSection.endLine = i;
-        currentSection.content = lines.slice(currentSection.startLine!, i).join('\n');
-        sections.push(currentSection as WishSection);
-      }
-
-      // Start new section
-      currentSection = {
+      headings.push({
         heading: headingMatch[2].trim(),
         level: headingMatch[1].length,
         startLine: i,
-      };
+      });
     }
   }
 
-  // Close last section
-  if (currentSection) {
-    currentSection.endLine = lines.length;
-    currentSection.content = lines.slice(currentSection.startLine!).join('\n');
-    sections.push(currentSection as WishSection);
-  }
+  // Second pass: compute end lines based on same-or-higher-level boundaries
+  const sections: WishSection[] = headings.map((h, idx) => {
+    // Find next heading at same or higher level (lower number = higher level)
+    let endLine = lines.length;
+    for (let j = idx + 1; j < headings.length; j++) {
+      if (headings[j].level <= h.level) {
+        endLine = headings[j].startLine;
+        break;
+      }
+    }
+
+    return {
+      heading: h.heading,
+      level: h.level,
+      startLine: h.startLine,
+      endLine,
+      content: lines.slice(h.startLine, endLine).join('\n'),
+    };
+  });
 
   return sections;
 }
@@ -184,20 +211,21 @@ export async function listWishSlugs(repoPath: string): Promise<string[]> {
 
   try {
     const entries = await readdir(wishesDir, { withFileTypes: true });
-    const slugs: string[] = [];
 
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        try {
-          await access(join(wishesDir, entry.name, 'wish.md'));
-          slugs.push(entry.name);
-        } catch {
-          // No wish.md in this directory
-        }
-      }
-    }
+    const results = await Promise.all(
+      entries
+        .filter(entry => entry.isDirectory())
+        .map(async (entry) => {
+          try {
+            await access(join(wishesDir, entry.name, 'wish.md'));
+            return entry.name;
+          } catch {
+            return null;
+          }
+        })
+    );
 
-    return slugs.sort();
+    return results.filter((slug): slug is string => slug !== null).sort();
   } catch {
     return [];
   }

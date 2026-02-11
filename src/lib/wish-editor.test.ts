@@ -10,6 +10,7 @@ import {
   wishExists,
   listWishSlugs,
   getWishPath,
+  validateSlug,
 } from './wish-editor.js';
 
 // ============================================================================
@@ -111,6 +112,37 @@ describe('parseSections', () => {
   test('handles content with no headings', () => {
     const sections = parseSections('Just some text\nwith no headings.\n');
     expect(sections).toEqual([]);
+  });
+
+  test('parent sections include nested subsections', () => {
+    const sections = parseSections(SAMPLE_WISH);
+
+    // "Execution Groups" (##) should include "Group 1" (###) and "Group 2" (###)
+    const execGroups = sections.find(s => s.heading === 'Execution Groups');
+    expect(execGroups).not.toBeNull();
+    expect(execGroups!.content).toContain('### Group 1: Core Fixes');
+    expect(execGroups!.content).toContain('Fix the bugs.');
+    expect(execGroups!.content).toContain('### Group 2: Tests');
+    expect(execGroups!.content).toContain('Write comprehensive tests.');
+  });
+
+  test('child sections have their own entries too', () => {
+    const sections = parseSections(SAMPLE_WISH);
+
+    const group1 = sections.find(s => s.heading === 'Group 1: Core Fixes');
+    expect(group1).not.toBeNull();
+    expect(group1!.content).toContain('Fix the bugs.');
+    // Group 1 should NOT include Group 2 content (same level)
+    expect(group1!.content).not.toContain('Write comprehensive tests.');
+  });
+
+  test('h1 section includes all nested content until EOF', () => {
+    const sections = parseSections(SAMPLE_WISH);
+    const h1 = sections.find(s => s.heading === 'Forge Resilience');
+    expect(h1).not.toBeNull();
+    // h1 has no sibling, so it runs to EOF — includes everything
+    expect(h1!.content).toContain('## Overview');
+    expect(h1!.content).toContain('## Review Results');
   });
 
   test('ignores headings inside code blocks', () => {
@@ -232,5 +264,25 @@ describe('wish-editor filesystem operations', () => {
   test('getWishPath returns correct path', () => {
     const path = getWishPath('/repo', 'my-wish');
     expect(path).toBe('/repo/.genie/wishes/my-wish/wish.md');
+  });
+
+  test('validateSlug accepts safe slugs', () => {
+    expect(() => validateSlug('my-wish')).not.toThrow();
+    expect(() => validateSlug('wish_2026-02-11')).not.toThrow();
+  });
+
+  test('validateSlug rejects path traversal patterns', () => {
+    expect(() => validateSlug('../etc/passwd')).toThrow();
+    expect(() => validateSlug('..')).toThrow();
+    expect(() => validateSlug('a/b')).toThrow();
+    expect(() => validateSlug('a\\b')).toThrow();
+  });
+
+  test('getWishPath throws on invalid slug', () => {
+    expect(() => getWishPath('/repo', '../../etc/passwd')).toThrow();
+  });
+
+  test('readWish throws on invalid slug', async () => {
+    await expect(readWish(tmpDir, '../../etc/passwd')).rejects.toThrow();
   });
 });
