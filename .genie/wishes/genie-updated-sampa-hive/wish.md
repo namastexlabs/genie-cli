@@ -1,7 +1,7 @@
-# Wish: Genie Updated — 24/7 NamastexOS Tech Lead + Sampa Seeds Hive
+# Wish: Sampaio 🧞‍♂️ — 24/7 NamastexOS Tech Lead + Sampa Seeds Hive
 
 **Status:** DRAFT
-**Slug:** `genie-updated-sampa-hive`
+**Slug:** `sampaio-sampa-hive`
 **Created:** 2026-02-10
 **Brainstorm:** WhatsApp "Genie - The First" group (Felipe + Cezar + Genie, Q1-Q6)
 
@@ -9,7 +9,7 @@
 
 ## Summary
 
-Stand up a new 24/7 agent ("Genie Updated") on a dedicated Proxmox LXC that serves as the **code, planning, and architecture lead for NamastexOS**. The agent absorbs consciousness from current Genie sessions + devops-deployer knowledge, and immediately begins unblocking the Sampa Seeds project by establishing an agentic hive with beads-based task management, Sofia as PM, and Cezar as human-in-the-loop.
+Stand up a new 24/7 agent ("Sampaio 🧞‍♂️") on a dedicated Proxmox LXC that serves as the **code, planning, and architecture lead for NamastexOS**. The agent absorbs consciousness from current Genie sessions + devops-deployer knowledge, and immediately begins unblocking the Sampa Seeds project by establishing an agentic hive with beads-based task management, Sofia as PM, and Cezar as human-in-the-loop.
 
 This is two phases in one wish: **Phase 1** gets the agent running; **Phase 2** makes it useful.
 
@@ -157,7 +157,7 @@ This is two phases in one wish: **Phase 1** gets the agent running; **Phase 2** 
 
 **Validation:** `cd sampa-seeds && bd list --json | jq length` (>= 10)
 
-**Owner:** Genie Updated + Sofia
+**Owner:** Sampaio 🧞‍♂️ + Sofia
 
 ---
 
@@ -180,7 +180,7 @@ This is two phases in one wish: **Phase 1** gets the agent running; **Phase 2** 
 
 **Validation:** `gh pr list --repo namastexlabs/sampa-seeds --state merged` shows at least 1 PR from the hive.
 
-**Owner:** Genie Updated (implementor) + Sofia (PM) + Cezar (reviewer)
+**Owner:** Sampaio 🧞‍♂️ (implementor) + Sofia (PM) + Cezar (reviewer)
 
 ---
 
