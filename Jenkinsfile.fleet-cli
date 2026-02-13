@@ -32,13 +32,12 @@ def updateGenieCLI(String sshTarget, String hostLabel) {
         ssh -o BatchMode=yes -o ConnectTimeout=20 ${sshTarget} 'bash -s' << 'REMOTE_SCRIPT'
             set -euo pipefail
 
-            REPO_DIR="\${HOME}/.local/share/genie-cli/repo"
-            mkdir -p "$(dirname "\${REPO_DIR}")"
+            REPO_DIR="\${HOME}/workspace/repos/automagik/genie-cli"
 
-            # Clone if missing, else update
+            # Ensure repo exists and is valid
             if [ ! -d "\${REPO_DIR}/.git" ]; then
-                rm -rf "\${REPO_DIR}"
-                git clone --branch main --depth 1 https://github.com/namastexlabs/genie-cli.git "\${REPO_DIR}"
+                echo "ERROR: genie-cli repo not found at \${REPO_DIR}"
+                exit 2
             fi
 
             cd "\${REPO_DIR}"
