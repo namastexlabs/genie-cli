@@ -1,0 +1,24 @@
+{
+  "name": "@automagik/genie",
+  "version": "0.260224.1000",
+  "description": "Genie CLI - Provider-selectable orchestration over tmux",
+  "type": "module",
+  "bin": {
+    "genie": "./dist/genie.js",
+    "term": "./dist/term.js"
+  },
+  "scripts": {
+    "build": "bun build src/genie.ts src/term.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3"
+  }
+}

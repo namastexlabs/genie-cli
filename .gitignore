@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.genie/workers.json
+.genie/mailbox/
+.genie/tasks.json
+.genie/state.json
+bun.lock
