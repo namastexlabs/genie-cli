@@ -9,6 +9,7 @@
  * - package.json (root)
  * - src/lib/version.ts
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
+ * - .claude-plugin/marketplace.json (Claude Code marketplace)
  * - openclaw.plugin.json (OpenClaw — root level)
  * - plugins/genie/package.json (smart-install version checks)
  */
@@ -94,13 +95,28 @@ async function main() {
     version
   );
 
-  // 4. Update OpenClaw plugin manifest (root level)
+  // 4. Update marketplace.json plugin version
+  const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
+  if (existsSync(marketplacePath)) {
+    try {
+      const json = JSON.parse(await readFile(marketplacePath, 'utf-8'));
+      if (json.plugins?.[0]) {
+        json.plugins[0].version = version;
+      }
+      await writeFile(marketplacePath, JSON.stringify(json, null, 2) + '\n');
+      console.log(`  ✓ ${marketplacePath}`);
+    } catch (err) {
+      console.error(`  ✗ Failed: ${marketplacePath}`, err);
+    }
+  }
+
+  // 5. Update OpenClaw plugin manifest (root level)
   await updateJsonVersion(
     join(rootDir, 'openclaw.plugin.json'),
     version
   );
 
-  // 5. Update plugin package.json (used by smart-install.js for version checks)
+  // 6. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(
     join(rootDir, 'plugins/genie/package.json'),
     version
