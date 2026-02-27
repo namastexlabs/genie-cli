@@ -44,6 +44,7 @@ yarn-error.log*
 
 # Worker worktrees
 .genie/worktrees/
+.worktrees/
 
 # Worker registry (contains session IDs)
 .genie/workers.json
