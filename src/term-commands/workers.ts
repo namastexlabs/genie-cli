@@ -809,8 +809,35 @@ export function registerWorkerNamespace(program: Command): void {
       try {
         const workers = await registry.list();
 
+        // Detect live state + clean up dead workers before displaying
+        const alive: { worker: registry.Worker; liveState: string }[] = [];
+        const cleaned: string[] = [];
+
+        for (const w of workers) {
+          const paneAlive = await isPaneAlive(w.paneId);
+
+          if (paneAlive) {
+            // Detect real-time state from pane output
+            const liveState = await getCurrentState(w.paneId);
+            const mapped = mapDisplayStateToRegistry(liveState);
+            if (mapped && mapped !== w.state) {
+              await registry.updateState(w.id, mapped);
+            }
+            alive.push({ worker: w, liveState });
+          } else {
+            // Dead pane — auto-unregister + clean up native team entry
+            if (w.team && w.nativeAgentId) {
+              const agentName = w.nativeAgentId.split('@')[0];
+              await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
+              await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
+            }
+            await registry.unregister(w.id);
+            cleaned.push(w.id);
+          }
+        }
+
         if (options.json) {
-          console.log(JSON.stringify(workers.map(w => ({
+          const result: any[] = alive.map(({ worker: w, liveState }) => ({
             id: w.id,
             provider: w.provider,
             transport: w.transport,
@@ -820,13 +847,17 @@ export function registerWorkerNamespace(program: Command): void {
             role: w.role,
             skill: w.skill,
             team: w.team,
-            state: w.state,
+            state: liveState,
             elapsed: registry.getElapsedTime(w).formatted,
-          })), null, 2));
+          }));
+          if (cleaned.length > 0) {
+            result.push(...cleaned.map(id => ({ id, state: 'dead (cleaned)' })));
+          }
+          console.log(JSON.stringify(result, null, 2));
           return;
         }
 
-        if (workers.length === 0) {
+        if (alive.length === 0 && cleaned.length === 0) {
           console.log('No workers found.');
           console.log('  Spawn one: genie worker spawn --role implementor');
           return;
@@ -845,14 +876,19 @@ export function registerWorkerNamespace(program: Command): void {
         );
         console.log('-'.repeat(80));
 
-        for (const w of workers) {
+        for (const { worker: w, liveState } of alive) {
           const id = w.id.padEnd(20).substring(0, 20);
           const provider = (w.provider || '-').padEnd(10);
           const team = (w.team || '-').padEnd(10).substring(0, 10);
           const role = (w.role || '-').padEnd(14).substring(0, 14);
-          const state = w.state.padEnd(12);
+          const state = liveState.padEnd(12);
           const time = registry.getElapsedTime(w).formatted;
           console.log(`${id}${provider}${team}${role}${state}${time}`);
+        }
+
+        if (cleaned.length > 0) {
+          console.log('');
+          console.log(`Cleaned ${cleaned.length} dead worker(s): ${cleaned.join(', ')}`);
         }
         console.log('');
       } catch (error: any) {
