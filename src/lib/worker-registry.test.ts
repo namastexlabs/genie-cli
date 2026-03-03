@@ -420,12 +420,10 @@ function makeTemplate(overrides: Partial<WorkerTemplate> = {}): WorkerTemplate {
 
 /** Reset the global registry to empty state for template tests. */
 function resetGlobalRegistry(): void {
-  const { mkdirSync: mkdirs, writeFileSync: wfs } = require('fs');
-  const { join: joinPath } = require('path');
-  const { homedir: home } = require('os');
-  const configDir = joinPath(home(), '.config', 'genie');
-  mkdirs(configDir, { recursive: true });
-  wfs(joinPath(configDir, 'workers.json'), JSON.stringify({
+  const { homedir } = require('os');
+  const configDir = join(homedir(), '.config', 'genie');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'workers.json'), JSON.stringify({
     workers: {},
     templates: {},
     lastUpdated: new Date().toISOString(),
@@ -556,12 +554,10 @@ describe('backwards compat: registry without templates key', () => {
 
   test('loading a workers.json without templates key defaults to empty', async () => {
     // Write a legacy registry file without templates
-    const { mkdirSync: mkdirs } = await import('fs');
-    const { join: joinPath } = await import('path');
-    const { homedir: home } = await import('os');
-    const configDir = joinPath(home(), '.config', 'genie');
-    mkdirs(configDir, { recursive: true });
-    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify({
+    const { homedir } = require('os');
+    const configDir = join(homedir(), '.config', 'genie');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'workers.json'), JSON.stringify({
       workers: {},
       lastUpdated: new Date().toISOString(),
     }, null, 2));
@@ -576,7 +572,7 @@ describe('backwards compat: registry without templates key', () => {
 
     // Cleanup
     const { unlinkSync } = await import('fs');
-    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
+    try { unlinkSync(join(configDir, 'workers.json')); } catch {}
   });
 });
 

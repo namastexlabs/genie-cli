@@ -10,8 +10,9 @@
 import * as mailbox from './mailbox.js';
 import * as registry from './worker-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
-import { executeTmux, capturePaneContent } from './tmux.js';
+import { executeTmux, capturePaneContent, isPaneAlive } from './tmux.js';
 import { spawnWorker } from './worker-spawner.js';
+import { detectState } from './orchestrator/index.js';
 
 // ============================================================================
 // Types
@@ -26,25 +27,26 @@ export interface DeliveryResult {
   autoSpawned?: boolean;
 }
 
-/** Delay (ms) after auto-spawning a worker before attempting delivery. */
-const AUTO_SPAWN_INIT_DELAY_MS = 3000;
-
-// ============================================================================
-// Auto-Spawn Helpers
-// ============================================================================
+/** Max time (ms) to wait for a freshly-spawned worker to reach idle. */
+const AUTO_SPAWN_READY_TIMEOUT_MS = 15000;
+/** Polling interval (ms) while waiting for worker readiness. */
+const AUTO_SPAWN_POLL_INTERVAL_MS = 1000;
 
 /**
- * Check if a tmux pane is still alive by attempting a minimal capture.
+ * Poll a freshly-spawned pane until it looks ready (prompt detected)
+ * or the timeout expires. Returns true if the worker appears ready.
  */
-async function isPaneAlive(paneId: string): Promise<boolean> {
-  if (!paneId || paneId === 'inline') return false;
-  if (!/^%\d+$/.test(paneId)) return false;
-  try {
-    await capturePaneContent(paneId, 1);
-    return true;
-  } catch {
-    return false;
+async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_TIMEOUT_MS): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const content = await capturePaneContent(paneId, 30);
+      const state = detectState(content);
+      if (state.type === 'idle') return true;
+    } catch { /* pane not ready yet */ }
+    await new Promise(r => setTimeout(r, AUTO_SPAWN_POLL_INTERVAL_MS));
   }
+  return false;
 }
 
 /**
@@ -65,15 +67,18 @@ async function ensureWorkerAlive(
   // Not in tmux — can't auto-spawn
   if (!process.env.TMUX) return null;
 
-  // Look up template: try worker's role, then the recipient ID directly
-  const templateKey = worker?.role ?? worker?.id ?? recipientId;
-  let template = await registry.findTemplate(templateKey);
-  if (!template && worker?.role) {
-    template = await registry.findTemplate(worker.role);
-  }
-  if (!template) {
-    template = await registry.findTemplate(recipientId);
-  }
+  // Look up template — single disk read, filter in memory
+  const templates = await registry.listTemplates();
+  const candidates = [
+    worker?.role,
+    worker?.id,
+    recipientId,
+  ].filter((v): v is string => Boolean(v));
+  // De-duplicate candidates to avoid redundant checks
+  const uniqueCandidates = [...new Set(candidates)];
+  const template = templates.find(t =>
+    uniqueCandidates.some(q => t.id === q || t.role === q || `${t.team}:${t.role}` === q)
+  );
   if (!template) return null;
 
   try {
@@ -97,8 +102,8 @@ async function ensureWorkerAlive(
       lastSpawnedAt: new Date().toISOString(),
     });
 
-    // Wait for the worker to initialize
-    await new Promise(resolve => setTimeout(resolve, AUTO_SPAWN_INIT_DELAY_MS));
+    // Poll until worker is ready (prompt detected) or timeout
+    await waitForWorkerReady(result.paneId);
 
     return { worker: result.worker, respawned: true };
   } catch {

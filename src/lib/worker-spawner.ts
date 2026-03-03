@@ -6,12 +6,19 @@
  * (throws if TMUX env var is not set).
  */
 
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { writeFile as writeFileAsync } from 'fs/promises';
+import { join } from 'path';
+import { homedir } from 'os';
 import * as registry from './worker-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import * as teamManager from './team-manager.js';
 import { buildLaunchCommand, validateSpawnParams, type ProviderName, type SpawnParams, type ClaudeTeamColor } from './provider-adapters.js';
 import { resolveLayoutMode, buildLayoutCommand } from './mosaic-layout.js';
-import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from './codex-config.js';
+import { ensureCodexOtelConfig } from './codex-config.js';
+
+const execAsync = promisify(exec);
 
 // ============================================================================
 // Types
@@ -40,7 +47,7 @@ export interface SpawnResult {
 // Helpers (re-imported from workers.ts pattern)
 // ============================================================================
 
-async function generateWorkerId(team: string, role?: string): Promise<string> {
+export async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
   const existing = await registry.list();
   if (!existing.some(w => w.id === base)) return base;
@@ -81,8 +88,6 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<SpawnResult
   if (!process.env.TMUX) {
     throw new Error('spawnWorker requires a tmux session (TMUX env var not set)');
   }
-
-  const { execSync } = require('child_process');
 
   // 1. Resolve team infrastructure
   const repoPath = opts.cwd ?? process.cwd();
@@ -151,17 +156,17 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<SpawnResult
   // 5. Create tmux pane
   let paneId: string;
   try {
-    paneId = execSync(
+    const { stdout } = await execAsync(
       `tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`,
-      { encoding: 'utf-8' },
-    ).trim();
+    );
+    paneId = stdout.trim();
   } catch (err: any) {
     throw new Error(`Failed to create tmux pane: ${err?.message ?? 'unknown error'}`);
   }
 
   // Best-effort layout
   try {
-    execSync(`tmux ${buildLayoutCommand('genie:0', layoutMode)}`, { stdio: 'ignore' });
+    await execAsync(`tmux ${buildLayoutCommand('genie:0', layoutMode)}`);
   } catch { /* best-effort */ }
 
   // 6. Register worker
@@ -206,12 +211,9 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<SpawnResult
 
   // 8. Register with OTel relay for Codex
   if (otelRelayActive && paneId !== '%0') {
-    const { writeFileSync: wfs } = require('fs');
-    const { join: pjoin } = require('path');
-    const { homedir: hdir } = require('os');
-    const rd = pjoin(hdir(), '.genie', 'relay');
-    wfs(pjoin(rd, `${workerId}-pane`), paneId);
-    wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({
+    const rd = join(homedir(), '.genie', 'relay');
+    await writeFileAsync(join(rd, `${workerId}-pane`), paneId);
+    await writeFileAsync(join(rd, `${workerId}-meta`), JSON.stringify({
       agent: agentName,
       color: spawnColor,
     }));

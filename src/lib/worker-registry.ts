@@ -6,7 +6,7 @@
  * `.genie/workers.json` (repo-local) or `~/.config/genie/workers.json`.
  */
 
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, writeFile, open, unlink, stat } from 'fs/promises';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import type { ProviderName } from './provider-adapters.js';
@@ -24,7 +24,7 @@ export type WorkerState =
   | 'done'        // Task completed, ready for close
   | 'error';      // Encountered error
 
-export type TransportType = 'tmux';
+export type TransportType = 'tmux' | 'inline';
 
 export interface Worker {
   /** Unique worker ID (usually matches taskId, e.g., "bd-42"). */
@@ -164,21 +164,88 @@ async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Pr
 }
 
 // ============================================================================
+// File Locking — prevents concurrent load/modify/save races
+// ============================================================================
+
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_RETRY_MS = 50;
+const LOCK_STALE_MS = 10000;
+
+/**
+ * Acquire an exclusive file lock using atomic file creation (O_CREAT | O_EXCL).
+ * Returns a release function. Retries on contention up to LOCK_TIMEOUT_MS.
+ * Stale locks older than LOCK_STALE_MS are force-removed.
+ */
+async function acquireLock(registryPath?: string): Promise<() => Promise<void>> {
+  const filePath = registryPath ?? getRegistryFilePath();
+  const lockPath = filePath + '.lock';
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      // O_CREAT | O_EXCL — atomic, fails if file exists
+      const handle = await open(lockPath, 'wx');
+      await handle.writeFile(String(process.pid));
+      await handle.close();
+      return async () => {
+        try { await unlink(lockPath); } catch { /* already removed */ }
+      };
+    } catch (err: any) {
+      if (err.code !== 'EEXIST') throw err;
+
+      // Check for stale lock (process may have crashed)
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+          try { await unlink(lockPath); } catch { /* race with other cleanup */ }
+          continue; // Retry immediately after removing stale lock
+        }
+      } catch { /* lock file gone — retry */ continue; }
+
+      if (Date.now() > deadline) {
+        // Force-remove stuck lock after timeout; throw if unlink fails
+        try { await unlink(lockPath); } catch {
+          throw new Error(`Registry lock timeout: could not remove stale lock at ${lockPath}`);
+        }
+        continue;
+      }
+      await new Promise(r => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+
+/**
+ * Execute a read-modify-write operation on the registry with file locking.
+ * Prevents concurrent access from multiple processes (e.g., router auto-spawn
+ * + CLI worker list cleanup running simultaneously).
+ */
+async function withRegistry<T>(
+  fn: (reg: WorkerRegistry) => T | Promise<T>,
+  registryPath?: string,
+): Promise<T> {
+  const release = await acquireLock(registryPath);
+  try {
+    const reg = await loadRegistry(registryPath);
+    const result = await fn(reg);
+    await saveRegistry(reg, registryPath);
+    return result;
+  } finally {
+    await release();
+  }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
 /** Register a new worker. */
 export async function register(worker: Worker): Promise<void> {
-  const registry = await loadRegistry();
-  registry.workers[worker.id] = worker;
-  await saveRegistry(registry);
+  await withRegistry(reg => { reg.workers[worker.id] = worker; });
 }
 
 /** Unregister (remove) a worker. */
 export async function unregister(id: string): Promise<void> {
-  const registry = await loadRegistry();
-  delete registry.workers[id];
-  await saveRegistry(registry);
+  await withRegistry(reg => { delete reg.workers[id]; });
 }
 
 /** Get a worker by ID. */
@@ -195,26 +262,26 @@ export async function list(): Promise<Worker[]> {
 
 /** Update a worker's state. */
 export async function updateState(id: string, state: WorkerState): Promise<void> {
-  const registry = await loadRegistry();
-  const worker = registry.workers[id];
-  if (worker) {
-    worker.state = state;
-    worker.lastStateChange = new Date().toISOString();
-    await saveRegistry(registry);
-  }
+  await withRegistry(reg => {
+    const worker = reg.workers[id];
+    if (worker) {
+      worker.state = state;
+      worker.lastStateChange = new Date().toISOString();
+    }
+  });
 }
 
 /** Update multiple worker fields. */
 export async function update(id: string, updates: Partial<Worker>): Promise<void> {
-  const registry = await loadRegistry();
-  const worker = registry.workers[id];
-  if (worker) {
-    Object.assign(worker, updates);
-    if (updates.state) {
-      worker.lastStateChange = new Date().toISOString();
+  await withRegistry(reg => {
+    const worker = reg.workers[id];
+    if (worker) {
+      Object.assign(worker, updates);
+      if (updates.state) {
+        worker.lastStateChange = new Date().toISOString();
+      }
     }
-    await saveRegistry(registry);
-  }
+  });
 }
 
 /** Find worker by tmux pane ID. */
@@ -345,9 +412,7 @@ export function getRegistryPath(): string {
 
 /** Save or update a worker template. */
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
-  const reg = await loadRegistry();
-  reg.templates[template.id] = template;
-  await saveRegistry(reg);
+  await withRegistry(reg => { reg.templates[template.id] = template; });
 }
 
 /** Get a template by exact ID. */
@@ -370,9 +435,7 @@ export async function findTemplate(query: string): Promise<WorkerTemplate | null
 
 /** Remove a template by ID. */
 export async function removeTemplate(id: string): Promise<void> {
-  const reg = await loadRegistry();
-  delete reg.templates[id];
-  await saveRegistry(reg);
+  await withRegistry(reg => { delete reg.templates[id]; });
 }
 
 /** List all templates. */
@@ -390,15 +453,12 @@ export async function listTemplates(): Promise<WorkerTemplate[]> {
  * If the worker doesn't exist, this is a no-op.
  */
 export async function addSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  const registry = await loadRegistry(registryPath);
-  const worker = registry.workers[workerId];
-  if (!worker) return;
-
-  if (!worker.subPanes) {
-    worker.subPanes = [];
-  }
-  worker.subPanes.push(paneId);
-  await saveRegistry(registry, registryPath);
+  await withRegistry(reg => {
+    const worker = reg.workers[workerId];
+    if (!worker) return;
+    if (!worker.subPanes) worker.subPanes = [];
+    worker.subPanes.push(paneId);
+  }, registryPath);
 }
 
 /**
@@ -428,10 +488,9 @@ export async function getPane(workerId: string, index: number, registryPath?: st
  * If the worker doesn't exist or has no subPanes, this is a no-op.
  */
 export async function removeSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  const registry = await loadRegistry(registryPath);
-  const worker = registry.workers[workerId];
-  if (!worker || !worker.subPanes) return;
-
-  worker.subPanes = worker.subPanes.filter(p => p !== paneId);
-  await saveRegistry(registry, registryPath);
+  await withRegistry(reg => {
+    const worker = reg.workers[workerId];
+    if (!worker || !worker.subPanes) return;
+    worker.subPanes = worker.subPanes.filter(p => p !== paneId);
+  }, registryPath);
 }
