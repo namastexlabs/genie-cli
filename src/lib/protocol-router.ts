@@ -10,7 +10,8 @@
 import * as mailbox from './mailbox.js';
 import * as registry from './worker-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
-import { executeTmux } from './tmux.js';
+import { executeTmux, capturePaneContent } from './tmux.js';
+import { spawnWorker } from './worker-spawner.js';
 
 // ============================================================================
 // Types
@@ -21,6 +22,89 @@ export interface DeliveryResult {
   workerId: string;
   delivered: boolean;
   reason?: string;
+  /** Whether the worker was auto-spawned to deliver this message. */
+  autoSpawned?: boolean;
+}
+
+/** Delay (ms) after auto-spawning a worker before attempting delivery. */
+const AUTO_SPAWN_INIT_DELAY_MS = 3000;
+
+// ============================================================================
+// Auto-Spawn Helpers
+// ============================================================================
+
+/**
+ * Check if a tmux pane is still alive by attempting a minimal capture.
+ */
+async function isPaneAlive(paneId: string): Promise<boolean> {
+  if (!paneId || paneId === 'inline') return false;
+  if (!/^%\d+$/.test(paneId)) return false;
+  try {
+    await capturePaneContent(paneId, 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure the target worker is alive, auto-spawning from a template if needed.
+ *
+ * Returns the live worker and whether it was respawned, or null if
+ * auto-spawn is not possible (no template, not in tmux, etc.).
+ */
+async function ensureWorkerAlive(
+  worker: registry.Worker | null,
+  recipientId: string,
+): Promise<{ worker: registry.Worker; respawned: boolean } | null> {
+  // If worker exists and pane is alive, nothing to do
+  if (worker && await isPaneAlive(worker.paneId)) {
+    return { worker, respawned: false };
+  }
+
+  // Not in tmux — can't auto-spawn
+  if (!process.env.TMUX) return null;
+
+  // Look up template: try worker's role, then the recipient ID directly
+  const templateKey = worker?.role ?? worker?.id ?? recipientId;
+  let template = await registry.findTemplate(templateKey);
+  if (!template && worker?.role) {
+    template = await registry.findTemplate(worker.role);
+  }
+  if (!template) {
+    template = await registry.findTemplate(recipientId);
+  }
+  if (!template) return null;
+
+  try {
+    // Clean up the dead worker entry before respawning
+    if (worker) {
+      await registry.unregister(worker.id);
+    }
+
+    const result = await spawnWorker({
+      provider: template.provider,
+      team: template.team,
+      role: template.role,
+      skill: template.skill,
+      cwd: template.cwd,
+      extraArgs: template.extraArgs,
+    });
+
+    // Update template's last-spawned timestamp
+    await registry.saveTemplate({
+      ...template,
+      lastSpawnedAt: new Date().toISOString(),
+    });
+
+    // Wait for the worker to initialize
+    await new Promise(resolve => setTimeout(resolve, AUTO_SPAWN_INIT_DELAY_MS));
+
+    return { worker: result.worker, respawned: true };
+  } catch {
+    // Auto-spawn failed — non-fatal, fall through to normal delivery
+    return null;
+  }
 }
 
 // ============================================================================
@@ -44,8 +128,10 @@ export async function sendMessage(
   body: string,
   teamName?: string,
 ): Promise<DeliveryResult> {
-  // 1. Verify recipient exists in registry
-  const worker = await registry.get(to);
+  // 1. Resolve the target worker (exact match or fuzzy)
+  let worker = await registry.get(to);
+  let autoSpawned = false;
+
   if (!worker) {
     // Try finding by fuzzy match (team:role pattern)
     const allWorkers = await registry.list();
@@ -62,70 +148,59 @@ export async function sendMessage(
       };
     }
 
-    const match = matches[0];
+    worker = matches[0] ?? null;
+  }
 
-    if (!match) {
-      // Fallback: try writing directly to native team inbox
-      // This supports sending to team-lead or other agents not in the worker registry
-      const resolvedTeam = teamName ?? await nativeTeams.discoverTeamName();
-      if (resolvedTeam) {
-        try {
-          // Persist to mailbox first (DEC-7) even for native-only delivery
-          const message = await mailbox.send(repoPath, from, to, body);
-          const nativeMsg: nativeTeams.NativeInboxMessage = {
-            from,
-            text: body,
-            summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
-            timestamp: new Date().toISOString(),
-            color: 'blue',
-            read: false,
-          };
-          await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
-          await mailbox.markDelivered(repoPath, to, message.id);
-          return {
-            messageId: message.id,
-            workerId: to,
-            delivered: true,
-          };
-        } catch {
-          // Native inbox write failed — fall through to error
-        }
+  // 2. Ensure the worker is alive — auto-spawn from template if dead/missing
+  const aliveResult = await ensureWorkerAlive(worker, to);
+  if (aliveResult) {
+    worker = aliveResult.worker;
+    autoSpawned = aliveResult.respawned;
+  }
+
+  // 3. If still no worker, try native inbox fallback
+  if (!worker) {
+    const resolvedTeam = teamName ?? await nativeTeams.discoverTeamName();
+
+    // Try auto-spawn via template even when no worker entry existed
+    // (ensureWorkerAlive above already tried, but only if worker was null
+    // and we had a template — if we reach here, there's no template either)
+
+    if (resolvedTeam) {
+      try {
+        const message = await mailbox.send(repoPath, from, to, body);
+        const nativeMsg: nativeTeams.NativeInboxMessage = {
+          from,
+          text: body,
+          summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+          timestamp: new Date().toISOString(),
+          color: 'blue',
+          read: false,
+        };
+        await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+        await mailbox.markDelivered(repoPath, to, message.id);
+        return {
+          messageId: message.id,
+          workerId: to,
+          delivered: true,
+        };
+      } catch {
+        // Native inbox write failed — fall through to error
       }
-
-      return {
-        messageId: '',
-        workerId: to,
-        delivered: false,
-        reason: `Worker "${to}" not found in registry`,
-      };
-    }
-
-    // Use the matched worker
-    const message = await mailbox.send(repoPath, from, match.id, body);
-
-    // Deliver based on worker type
-    let delivered = false;
-    if (match.nativeTeamEnabled && match.team && match.role) {
-      delivered = await writeToNativeInbox(match, message);
-    } else {
-      delivered = await injectToTmuxPane(match, message);
-    }
-
-    if (delivered) {
-      await mailbox.markDelivered(repoPath, match.id, message.id);
     }
 
     return {
-      messageId: message.id,
-      workerId: match.id,
-      delivered,
+      messageId: '',
+      workerId: to,
+      delivered: false,
+      reason: `Worker "${to}" not found in registry and no template available for auto-spawn`,
     };
   }
 
-  // 2. Persist to mailbox first (DEC-7)
-  const message = await mailbox.send(repoPath, from, to, body);
+  // 4. Persist to mailbox first (DEC-7)
+  const message = await mailbox.send(repoPath, from, worker.id, body);
 
-  // 3. Deliver based on worker type
+  // 5. Deliver based on worker type
   let delivered = false;
   if (worker.nativeTeamEnabled && worker.team && worker.role) {
     delivered = await writeToNativeInbox(worker, message);
@@ -134,13 +209,14 @@ export async function sendMessage(
   }
 
   if (delivered) {
-    await mailbox.markDelivered(repoPath, to, message.id);
+    await mailbox.markDelivered(repoPath, worker.id, message.id);
   }
 
   return {
     messageId: message.id,
-    workerId: to,
+    workerId: worker.id,
     delivered,
+    autoSpawned: autoSpawned || undefined,
   };
 }
 

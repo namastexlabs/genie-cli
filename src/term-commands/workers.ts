@@ -23,6 +23,7 @@ import { resolveLayoutMode, buildLayoutCommand } from '../lib/mosaic-layout.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import * as teamManager from '../lib/team-manager.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
+import { spawnWorker } from '../lib/worker-spawner.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -639,98 +640,92 @@ export function registerWorkerNamespace(program: Command): void {
           process.exit(1);
         }
 
-        // 1b. Validate spawn parameters (Group A contract)
-        const params: SpawnParams = {
-          provider: options.provider as ProviderName,
-          team,
-          role: options.role,
-          skill: options.skill,
-          extraArgs: options.extraArgs,
-        };
-
-        // 2. Ensure native team infrastructure exists (all providers).
-        //    The team-lead is always Claude Code, so the native team
-        //    directory + inbox must exist for join notifications to land.
-        const repoPath = process.cwd();
-        const teamConfig = await teamManager.getTeam(repoPath, team);
-
-        let parentSessionId = teamConfig?.nativeTeamParentSessionId;
-        if (!parentSessionId) {
-          parentSessionId = await nativeTeams.discoverClaudeSessionId() ?? crypto.randomUUID();
-        }
-
-        await nativeTeams.ensureNativeTeam(
-          team,
-          `Genie team: ${team}`,
-          parentSessionId,
-        );
-
-        const spawnColor = (options.color as ClaudeTeamColor)
-          ?? await nativeTeams.assignColor(team);
-
-        // 2b. Enable native teammate CLI flags for Claude only.
-        //     Codex doesn't speak the native IPC protocol, but still
-        //     gets registered in the team config for visibility.
-        if (options.provider === 'claude') {
-          params.nativeTeam = {
-            enabled: true,
-            parentSessionId,
-            color: spawnColor,
-            agentType: options.role ?? 'general-purpose',
-            planModeRequired: options.planMode,
-            permissionMode: options.permissionMode,
-            agentName: options.role,
-          };
-        }
-
-        const validated = validateSpawnParams(params);
-
-        // 2. Build launch command (Group C adapters)
-        const launch = buildLaunchCommand(validated);
-
-        // 3. Resolve layout (Group D)
-        const layoutMode = resolveLayoutMode(options.layout);
-
-        // 4. Generate worker ID
-        const workerId = await generateWorkerId(validated.team, validated.role);
-
-        // 5. Launch tmux pane with the provider command
-        const { execSync } = require('child_process');
-
         const insideTmux = Boolean(process.env.TMUX);
-        const nt = validated.nativeTeam;
-        const now = new Date().toISOString();
-        const transport = insideTmux ? 'tmux' : 'inline';
 
-        // 6. Register worker + native team BEFORE launching
-        //    (inline mode execs into claude, so post-launch code won't run)
-        const agentName = nt?.agentName ?? validated.role ?? 'worker';
+        if (insideTmux) {
+          // Tmux mode — delegate to the shared spawner module
+          const result = await spawnWorker({
+            provider: options.provider as ProviderName,
+            team,
+            role: options.role,
+            skill: options.skill,
+            cwd: process.cwd(),
+            extraArgs: options.extraArgs,
+            color: options.color as ClaudeTeamColor,
+            planMode: options.planMode,
+            permissionMode: options.permissionMode,
+            layout: options.layout,
+          });
 
-        // 6b. Ensure shared OTel relay for non-native workers (Codex).
-        //     The relay listens for OTLP events and captures the pane
-        //     when codex goes idle (3s silence after last event).
-        let otelRelayActive = false;
-        if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
-          ensureCodexOtelConfig();
-          otelRelayActive = await ensureOtelRelay(validated.team);
-        }
+          // Save template for auto-respawn on message delivery
+          await registry.saveTemplate({
+            id: options.role ?? result.workerId,
+            provider: options.provider as ProviderName,
+            team,
+            role: options.role,
+            skill: options.skill,
+            cwd: process.cwd(),
+            extraArgs: options.extraArgs,
+            nativeTeamEnabled: result.worker.nativeTeamEnabled,
+            lastSpawnedAt: new Date().toISOString(),
+          });
 
-        // Prepend env vars via `env` command (tmux exec's directly, no shell)
-        let fullCommand = launch.command;
-        if (launch.env && Object.keys(launch.env).length > 0) {
-          const envArgs = Object.entries(launch.env)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(' ');
-          fullCommand = `env ${envArgs} ${launch.command}`;
-        }
+          console.log(`Worker "${result.workerId}" spawned.`);
+          console.log(`  Provider: ${options.provider}`);
+          console.log(`  Team:     ${team}`);
+          console.log(`  Pane:     ${result.paneId}`);
+          if (options.role) console.log(`  Role:     ${options.role}`);
+          if (options.skill) console.log(`  Skill:    ${options.skill}`);
+          if (result.worker.nativeTeamEnabled) {
+            console.log(`  Native:   enabled`);
+            console.log(`  AgentID:  ${result.worker.nativeAgentId}`);
+          }
+        } else {
+          // Outside tmux — inline mode (blocking, special case)
+          // This path is not extracted because spawnSync blocks the process.
+          const params: SpawnParams = {
+            provider: options.provider as ProviderName,
+            team,
+            role: options.role,
+            skill: options.skill,
+            extraArgs: options.extraArgs,
+          };
 
-        const registerWorker = async (paneId: string) => {
+          const repoPath = process.cwd();
+          const teamConfig = await teamManager.getTeam(repoPath, team);
+          let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+          if (!parentSessionId) {
+            parentSessionId = await nativeTeams.discoverClaudeSessionId() ?? crypto.randomUUID();
+          }
+
+          await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
+          const spawnColor = (options.color as ClaudeTeamColor) ?? await nativeTeams.assignColor(team);
+
+          if (options.provider === 'claude') {
+            params.nativeTeam = {
+              enabled: true,
+              parentSessionId,
+              color: spawnColor,
+              agentType: options.role ?? 'general-purpose',
+              planModeRequired: options.planMode,
+              permissionMode: options.permissionMode,
+              agentName: options.role,
+            };
+          }
+
+          const validated = validateSpawnParams(params);
+          const launch = buildLaunchCommand(validated);
+          const workerId = await generateWorkerId(validated.team, validated.role);
+          const nt = validated.nativeTeam;
+          const now = new Date().toISOString();
+          const agentName = nt?.agentName ?? validated.role ?? 'worker';
+
           const workerEntry: registry.Worker = {
             id: workerId,
-            paneId,
+            paneId: 'inline',
             session: 'genie',
             provider: validated.provider,
-            transport,
+            transport: 'inline' as any,
             role: validated.role,
             skill: validated.skill,
             team: validated.team,
@@ -738,92 +733,42 @@ export function registerWorkerNamespace(program: Command): void {
             startedAt: now,
             state: 'spawning',
             lastStateChange: now,
-            repoPath: process.cwd(),
+            repoPath,
             nativeTeamEnabled: nt?.enabled ?? false,
             nativeAgentId: `${agentName}@${validated.team}`,
             nativeColor: nt?.color ?? spawnColor,
             parentSessionId: nt?.parentSessionId ?? parentSessionId,
           };
           await registry.register(workerEntry);
-          return workerEntry;
-        };
 
-        // Register in native team config + send join notification.
-        // Runs for ALL providers — the team-lead is always Claude Code
-        // and polls its native inbox, so the notification always lands.
-        const registerNative = async (paneId: string) => {
           await nativeTeams.registerNativeMember(validated.team, {
             agentName,
             agentType: nt?.agentType ?? validated.role ?? 'general-purpose',
             color: nt?.color ?? spawnColor ?? 'blue',
-            tmuxPaneId: paneId,
-            cwd: process.cwd(),
+            cwd: repoPath,
             planModeRequired: nt?.planModeRequired,
           });
           await nativeTeams.writeNativeInbox(validated.team, 'team-lead', {
             from: agentName,
-            text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${process.cwd()}. Ready for tasks.`,
+            text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${repoPath}. Ready for tasks.`,
             summary: `${agentName} (${validated.provider}) joined`,
             timestamp: new Date().toISOString(),
             color: nt?.color ?? spawnColor ?? 'blue',
             read: false,
           });
-        };
 
-        let paneId: string;
-
-        if (insideTmux) {
-          try {
-            paneId = execSync(
-              `tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`,
-              { encoding: 'utf-8' },
-            ).trim();
-          } catch (err: any) {
-            console.error(`Failed to create tmux pane: ${err?.message ?? 'unknown error'}`);
-            process.exit(1);
-          }
-
-          try {
-            execSync(`tmux ${buildLayoutCommand('genie:0', layoutMode)}`, { stdio: 'ignore' });
-          } catch { /* best-effort */ }
-
-          const workerEntry = await registerWorker(paneId);
-          await registerNative(paneId);
-
-          // Register pane with the shared OTel relay.
-          if (otelRelayActive && paneId !== '%0') {
-            const { writeFileSync: wfs } = require('fs');
-            const { join: pjoin } = require('path');
-            const { homedir: hdir } = require('os');
-            const rd = pjoin(hdir(), '.genie', 'relay');
-            wfs(pjoin(rd, `${workerId}-pane`), paneId);
-            wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({
-              agent: agentName,
-              color: spawnColor,
-            }));
-          }
-
-          console.log(`Worker "${workerId}" spawned.`);
-          console.log(`  Provider: ${launch.provider}`);
-          console.log(`  Command:  ${fullCommand}`);
-          console.log(`  Team:     ${validated.team}`);
-          console.log(`  Pane:     ${paneId}`);
-          if (validated.role) console.log(`  Role:     ${validated.role}`);
-          if (validated.skill) console.log(`  Skill:    ${validated.skill}`);
-          console.log(`  Layout:   ${layoutMode}`);
-          if (nt?.enabled) {
-            console.log(`  Native:   enabled`);
-            console.log(`  AgentID:  ${workerEntry.nativeAgentId}`);
-            console.log(`  Color:    ${nt.color}`);
-          }
-          if (otelRelayActive) {
-            console.log(`  OTel:     relay on port ${OTEL_RELAY_PORT}`);
-          }
-        } else {
-          // Outside tmux — register first, then exec foreground (blocking)
-          paneId = 'inline';
-          const workerEntry = await registerWorker(paneId);
-          await registerNative(paneId);
+          // Save template for auto-respawn
+          await registry.saveTemplate({
+            id: options.role ?? workerId,
+            provider: options.provider as ProviderName,
+            team,
+            role: options.role,
+            skill: options.skill,
+            cwd: repoPath,
+            extraArgs: options.extraArgs,
+            nativeTeamEnabled: nt?.enabled ?? false,
+            lastSpawnedAt: now,
+          });
 
           console.log(`Worker "${workerId}" starting inline...`);
           console.log(`  Provider: ${launch.provider} | Team: ${validated.team} | Role: ${validated.role ?? '-'}`);
@@ -832,22 +777,20 @@ export function registerWorkerNamespace(program: Command): void {
           }
           console.log('');
 
-          // Exec into claude — this blocks until the session ends
           const { spawnSync } = require('child_process');
           const envVars = { ...process.env, ...(launch.env ?? {}) };
-          const result = spawnSync('sh', ['-c', launch.command], {
+          const spawnResult = spawnSync('sh', ['-c', launch.command], {
             env: envVars,
             stdio: 'inherit',
           });
 
-          // Session ended — clean up
           await registry.unregister(workerId);
           if (nt?.enabled && agentName) {
             await nativeTeams.clearNativeInbox(validated.team, agentName).catch(() => {});
             await nativeTeams.unregisterNativeMember(validated.team, agentName).catch(() => {});
           }
           console.log(`\nWorker "${workerId}" session ended.`);
-          process.exit(result.status ?? 0);
+          process.exit(spawnResult.status ?? 0);
         }
 
       } catch (error: any) {

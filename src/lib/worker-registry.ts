@@ -83,8 +83,32 @@ export interface Worker {
   parentSessionId?: string;
 }
 
+/** Saved spawn configuration for auto-respawn on message delivery. */
+export interface WorkerTemplate {
+  /** Template key — typically the worker role or original worker ID. */
+  id: string;
+  /** Provider to use for respawn. */
+  provider: ProviderName;
+  /** Team name. */
+  team: string;
+  /** Worker role. */
+  role?: string;
+  /** Skill to load. */
+  skill?: string;
+  /** Working directory where the worker should operate. */
+  cwd: string;
+  /** Extra CLI args forwarded to provider. */
+  extraArgs?: string[];
+  /** Whether native teams should be enabled. */
+  nativeTeamEnabled?: boolean;
+  /** Timestamp of last spawn from this template. */
+  lastSpawnedAt: string;
+}
+
 export interface WorkerRegistry {
   workers: Record<string, Worker>;
+  /** Saved spawn templates for auto-respawn. */
+  templates: Record<string, WorkerTemplate>;
   lastUpdated: string;
 }
 
@@ -123,9 +147,12 @@ async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   try {
     const filePath = registryPath ?? getRegistryFilePath();
     const content = await readFile(filePath, 'utf-8');
-    return JSON.parse(content);
+    const data = JSON.parse(content);
+    // Backwards compat: ensure templates key exists
+    if (!data.templates) data.templates = {};
+    return data;
   } catch {
-    return { workers: {}, lastUpdated: new Date().toISOString() };
+    return { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
   }
 }
 
@@ -310,6 +337,48 @@ export function getConfigDir(): string {
 /** Get the registry file path. */
 export function getRegistryPath(): string {
   return getRegistryFilePath();
+}
+
+// ============================================================================
+// Worker Templates (auto-respawn)
+// ============================================================================
+
+/** Save or update a worker template. */
+export async function saveTemplate(template: WorkerTemplate): Promise<void> {
+  const reg = await loadRegistry();
+  reg.templates[template.id] = template;
+  await saveRegistry(reg);
+}
+
+/** Get a template by exact ID. */
+export async function getTemplate(id: string): Promise<WorkerTemplate | null> {
+  const reg = await loadRegistry();
+  return reg.templates[id] ?? null;
+}
+
+/**
+ * Find a template by fuzzy match: exact id, role, or team:role pattern.
+ * Returns the first match.
+ */
+export async function findTemplate(query: string): Promise<WorkerTemplate | null> {
+  const reg = await loadRegistry();
+  const templates = Object.values(reg.templates);
+  return templates.find(t =>
+    t.id === query || t.role === query || `${t.team}:${t.role}` === query
+  ) ?? null;
+}
+
+/** Remove a template by ID. */
+export async function removeTemplate(id: string): Promise<void> {
+  const reg = await loadRegistry();
+  delete reg.templates[id];
+  await saveRegistry(reg);
+}
+
+/** List all templates. */
+export async function listTemplates(): Promise<WorkerTemplate[]> {
+  const reg = await loadRegistry();
+  return Object.values(reg.templates);
 }
 
 // ============================================================================

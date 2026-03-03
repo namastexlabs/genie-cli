@@ -15,7 +15,13 @@ import {
   getPane,
   removeSubPane,
   findByWindow,
+  saveTemplate,
+  getTemplate,
+  findTemplate,
+  removeTemplate,
+  listTemplates,
   type Worker,
+  type WorkerTemplate,
 } from './worker-registry.js';
 
 // ============================================================================
@@ -389,6 +395,184 @@ describe('findByWindow', () => {
 
     const found = await findByWindow('@999');
     expect(found).toBeNull();
+
+    // Cleanup
+    const { unlinkSync } = await import('fs');
+    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
+  });
+});
+
+// ============================================================================
+// Worker Templates (auto-respawn)
+// ============================================================================
+
+function makeTemplate(overrides: Partial<WorkerTemplate> = {}): WorkerTemplate {
+  return {
+    id: 'implementor',
+    provider: 'claude',
+    team: 'genie',
+    role: 'implementor',
+    cwd: '/tmp/test',
+    lastSpawnedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+/** Reset the global registry to empty state for template tests. */
+function resetGlobalRegistry(): void {
+  const { mkdirSync: mkdirs, writeFileSync: wfs } = require('fs');
+  const { join: joinPath } = require('path');
+  const { homedir: home } = require('os');
+  const configDir = joinPath(home(), '.config', 'genie');
+  mkdirs(configDir, { recursive: true });
+  wfs(joinPath(configDir, 'workers.json'), JSON.stringify({
+    workers: {},
+    templates: {},
+    lastUpdated: new Date().toISOString(),
+  }, null, 2));
+}
+
+describe('saveTemplate / getTemplate', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    process.env.GENIE_WORKER_REGISTRY = 'global';
+    resetGlobalRegistry();
+  });
+
+  test('saveTemplate persists and getTemplate retrieves', async () => {
+    const tmpl = makeTemplate();
+    await saveTemplate(tmpl);
+
+    const loaded = await getTemplate('implementor');
+    expect(loaded).not.toBeNull();
+    expect(loaded!.id).toBe('implementor');
+    expect(loaded!.provider).toBe('claude');
+    expect(loaded!.team).toBe('genie');
+    expect(loaded!.role).toBe('implementor');
+    expect(loaded!.cwd).toBe('/tmp/test');
+  });
+
+  test('saveTemplate upserts existing template', async () => {
+    await saveTemplate(makeTemplate({ cwd: '/old' }));
+    await saveTemplate(makeTemplate({ cwd: '/new' }));
+
+    const loaded = await getTemplate('implementor');
+    expect(loaded!.cwd).toBe('/new');
+
+    const all = await listTemplates();
+    expect(all).toHaveLength(1);
+  });
+
+  test('getTemplate returns null for non-existent template', async () => {
+    const loaded = await getTemplate('ghost');
+    expect(loaded).toBeNull();
+  });
+});
+
+describe('findTemplate (fuzzy match)', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    process.env.GENIE_WORKER_REGISTRY = 'global';
+    resetGlobalRegistry();
+  });
+
+  test('findTemplate matches by exact id', async () => {
+    await saveTemplate(makeTemplate({ id: 'my-worker' }));
+    const found = await findTemplate('my-worker');
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe('my-worker');
+  });
+
+  test('findTemplate matches by role', async () => {
+    await saveTemplate(makeTemplate({ id: 'tmpl-1', role: 'tester' }));
+    const found = await findTemplate('tester');
+    expect(found).not.toBeNull();
+    expect(found!.role).toBe('tester');
+  });
+
+  test('findTemplate matches by team:role pattern', async () => {
+    await saveTemplate(makeTemplate({ id: 'tmpl-1', team: 'alpha', role: 'reviewer' }));
+    const found = await findTemplate('alpha:reviewer');
+    expect(found).not.toBeNull();
+    expect(found!.team).toBe('alpha');
+    expect(found!.role).toBe('reviewer');
+  });
+
+  test('findTemplate returns null when no match', async () => {
+    await saveTemplate(makeTemplate());
+    const found = await findTemplate('nonexistent');
+    expect(found).toBeNull();
+  });
+});
+
+describe('removeTemplate', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    process.env.GENIE_WORKER_REGISTRY = 'global';
+    resetGlobalRegistry();
+  });
+
+  test('removeTemplate deletes a template', async () => {
+    await saveTemplate(makeTemplate());
+    await removeTemplate('implementor');
+    const loaded = await getTemplate('implementor');
+    expect(loaded).toBeNull();
+  });
+
+  test('removeTemplate is a no-op for non-existent template', async () => {
+    await removeTemplate('ghost');
+    const all = await listTemplates();
+    expect(all).toHaveLength(0);
+  });
+});
+
+describe('listTemplates', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    process.env.GENIE_WORKER_REGISTRY = 'global';
+    resetGlobalRegistry();
+  });
+
+  test('listTemplates returns all saved templates', async () => {
+    await saveTemplate(makeTemplate({ id: 'a', role: 'impl' }));
+    await saveTemplate(makeTemplate({ id: 'b', role: 'test' }));
+    const all = await listTemplates();
+    expect(all).toHaveLength(2);
+    expect(all.map(t => t.id).sort()).toEqual(['a', 'b']);
+  });
+
+  test('listTemplates returns empty array when no templates', async () => {
+    const all = await listTemplates();
+    expect(all).toHaveLength(0);
+  });
+});
+
+describe('backwards compat: registry without templates key', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    process.env.GENIE_WORKER_REGISTRY = 'global';
+    resetGlobalRegistry();
+  });
+
+  test('loading a workers.json without templates key defaults to empty', async () => {
+    // Write a legacy registry file without templates
+    const { mkdirSync: mkdirs } = await import('fs');
+    const { join: joinPath } = await import('path');
+    const { homedir: home } = await import('os');
+    const configDir = joinPath(home(), '.config', 'genie');
+    mkdirs(configDir, { recursive: true });
+    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify({
+      workers: {},
+      lastUpdated: new Date().toISOString(),
+    }, null, 2));
+
+    const templates = await listTemplates();
+    expect(templates).toHaveLength(0);
+
+    // Can save a template without error
+    await saveTemplate(makeTemplate());
+    const loaded = await getTemplate('implementor');
+    expect(loaded).not.toBeNull();
 
     // Cleanup
     const { unlinkSync } = await import('fs');
