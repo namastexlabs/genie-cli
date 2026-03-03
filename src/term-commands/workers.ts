@@ -24,6 +24,7 @@ import * as nativeTeams from '../lib/claude-native-teams.js';
 import * as teamManager from '../lib/team-manager.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { spawnWorker } from '../lib/worker-spawner.js';
+import * as mailbox from '../lib/mailbox.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -453,6 +454,52 @@ function formatElapsed(startedAt: string): string {
   return '<1m';
 }
 
+/**
+ * Get the most recent message timestamp involving a worker (to or from).
+ * Checks genie mailbox and native team inbox.
+ */
+async function getLastMessageTime(worker: registry.Worker): Promise<string | null> {
+  const repoPath = worker.repoPath || process.cwd();
+  let latest: number = 0;
+
+  // 1. Check genie mailbox — messages TO this worker
+  try {
+    const msgs = await mailbox.inbox(repoPath, worker.id);
+    for (const m of msgs) {
+      const t = new Date(m.createdAt).getTime();
+      if (t > latest) latest = t;
+    }
+  } catch { /* no mailbox */ }
+
+  // 2. Check native team inbox — messages TO this worker's role
+  if (worker.team && worker.role) {
+    try {
+      const nativeMsgs = await nativeTeams.readNativeInbox(worker.team, worker.role);
+      for (const m of nativeMsgs) {
+        const t = new Date(m.timestamp).getTime();
+        if (t > latest) latest = t;
+      }
+    } catch { /* no native inbox */ }
+  }
+
+  return latest > 0 ? new Date(latest).toISOString() : null;
+}
+
+/**
+ * Format a timestamp as relative time (e.g., "2m ago", "1h ago").
+ */
+function formatRelativeTime(isoTimestamp: string): string {
+  const ms = Date.now() - new Date(isoTimestamp).getTime();
+  const minutes = Math.floor(ms / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d ago`;
+  if (hours > 0) return `${hours}h ago`;
+  if (minutes > 0) return `${minutes}m ago`;
+  return '<1m ago';
+}
+
 // ============================================================================
 // Legacy Workers Command (term workers)
 // ============================================================================
@@ -810,7 +857,7 @@ export function registerWorkerNamespace(program: Command): void {
         const workers = await registry.list();
 
         // Detect live state + clean up dead workers before displaying
-        const alive: { worker: registry.Worker; liveState: string }[] = [];
+        const alive: { worker: registry.Worker; liveState: string; lastMsg: string | null }[] = [];
         const cleaned: string[] = [];
 
         for (const w of workers) {
@@ -823,7 +870,8 @@ export function registerWorkerNamespace(program: Command): void {
             if (mapped && mapped !== w.state) {
               await registry.updateState(w.id, mapped);
             }
-            alive.push({ worker: w, liveState });
+            const lastMsg = await getLastMessageTime(w);
+            alive.push({ worker: w, liveState, lastMsg });
           } else {
             // Dead pane — auto-unregister + clean up native team entry
             if (w.team && w.nativeAgentId) {
@@ -837,7 +885,7 @@ export function registerWorkerNamespace(program: Command): void {
         }
 
         if (options.json) {
-          const result: any[] = alive.map(({ worker: w, liveState }) => ({
+          const result: any[] = alive.map(({ worker: w, liveState, lastMsg }) => ({
             id: w.id,
             provider: w.provider,
             transport: w.transport,
@@ -849,6 +897,7 @@ export function registerWorkerNamespace(program: Command): void {
             team: w.team,
             state: liveState,
             elapsed: registry.getElapsedTime(w).formatted,
+            lastMessage: lastMsg ?? null,
           }));
           if (cleaned.length > 0) {
             result.push(...cleaned.map(id => ({ id, state: 'dead (cleaned)' })));
@@ -865,25 +914,27 @@ export function registerWorkerNamespace(program: Command): void {
 
         console.log('');
         console.log('WORKERS');
-        console.log('-'.repeat(80));
+        console.log('-'.repeat(90));
         console.log(
           'ID'.padEnd(20) +
           'PROVIDER'.padEnd(10) +
           'TEAM'.padEnd(10) +
           'ROLE'.padEnd(14) +
           'STATE'.padEnd(12) +
-          'TIME'
+          'TIME'.padEnd(8) +
+          'LAST MSG'
         );
-        console.log('-'.repeat(80));
+        console.log('-'.repeat(90));
 
-        for (const { worker: w, liveState } of alive) {
+        for (const { worker: w, liveState, lastMsg } of alive) {
           const id = w.id.padEnd(20).substring(0, 20);
           const provider = (w.provider || '-').padEnd(10);
           const team = (w.team || '-').padEnd(10).substring(0, 10);
           const role = (w.role || '-').padEnd(14).substring(0, 14);
           const state = liveState.padEnd(12);
-          const time = registry.getElapsedTime(w).formatted;
-          console.log(`${id}${provider}${team}${role}${state}${time}`);
+          const time = registry.getElapsedTime(w).formatted.padEnd(8);
+          const msg = lastMsg ? formatRelativeTime(lastMsg) : '-';
+          console.log(`${id}${provider}${team}${role}${state}${time}${msg}`);
         }
 
         if (cleaned.length > 0) {
