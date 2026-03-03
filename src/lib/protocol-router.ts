@@ -59,8 +59,8 @@ async function ensureWorkerAlive(
   worker: registry.Worker | null,
   recipientId: string,
 ): Promise<{ worker: registry.Worker; respawned: boolean } | null> {
-  // If worker exists and pane is alive, nothing to do
-  if (worker && await isPaneAlive(worker.paneId)) {
+  // If worker exists, pane is alive, and not suspended — nothing to do
+  if (worker && worker.state !== 'suspended' && await isPaneAlive(worker.paneId)) {
     return { worker, respawned: false };
   }
 
@@ -81,8 +81,13 @@ async function ensureWorkerAlive(
   );
   if (!template) return null;
 
+  // Determine session ID for resume (Claude only — Codex doesn't support --resume)
+  const resumeSessionId = template.provider === 'claude'
+    ? (worker?.claudeSessionId ?? template.lastSessionId)
+    : undefined;
+
   try {
-    // Clean up the dead worker entry before respawning
+    // Clean up the dead/suspended worker entry before respawning
     if (worker) {
       await registry.unregister(worker.id);
     }
@@ -94,12 +99,14 @@ async function ensureWorkerAlive(
       skill: template.skill,
       cwd: template.cwd,
       extraArgs: template.extraArgs,
+      resume: resumeSessionId,
     });
 
-    // Update template's last-spawned timestamp
+    // Update template's last-spawned timestamp + session ID
     await registry.saveTemplate({
       ...template,
       lastSpawnedAt: new Date().toISOString(),
+      lastSessionId: result.worker.claudeSessionId,
     });
 
     // Poll until worker is ready (prompt detected) or timeout

@@ -35,6 +35,10 @@ export interface SpawnWorkerOptions {
   planMode?: boolean;
   permissionMode?: string;
   layout?: string;
+  /** Pre-generated session UUID (omit to auto-generate for Claude). */
+  sessionId?: string;
+  /** Resume an existing Claude session by UUID. */
+  resume?: string;
 }
 
 export interface SpawnResult {
@@ -106,13 +110,19 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<SpawnResult
 
   const spawnColor = opts.color ?? await nativeTeams.assignColor(opts.team);
 
-  // 2. Build spawn params
+  // 2. Build spawn params (session ID only for Claude — Codex doesn't support --session-id/--resume)
+  const isClaude = opts.provider === 'claude';
+  const claudeSessionId = isClaude
+    ? (opts.resume ? undefined : (opts.sessionId ?? crypto.randomUUID()))
+    : undefined;
   const params: SpawnParams = {
     provider: opts.provider,
     team: opts.team,
     role: opts.role,
     skill: opts.skill,
     extraArgs: opts.extraArgs,
+    sessionId: claudeSessionId,
+    resume: isClaude ? opts.resume : undefined,
   };
 
   // Enable native teammate flags for Claude
@@ -184,6 +194,7 @@ export async function spawnWorker(opts: SpawnWorkerOptions): Promise<SpawnResult
     state: 'spawning',
     lastStateChange: now,
     repoPath,
+    claudeSessionId: opts.resume ?? claudeSessionId,
     nativeTeamEnabled: nt?.enabled ?? false,
     nativeAgentId: `${agentName}@${validated.team}`,
     nativeColor: nt?.color ?? spawnColor,

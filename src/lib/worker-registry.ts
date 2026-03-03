@@ -22,7 +22,8 @@ export type WorkerState =
   | 'permission'  // Waiting for permission approval
   | 'question'    // Waiting for question answer
   | 'done'        // Task completed, ready for close
-  | 'error';      // Encountered error
+  | 'error'       // Encountered error
+  | 'suspended';  // Pane killed, session preserved for resume
 
 export type TransportType = 'tmux' | 'inline';
 
@@ -81,6 +82,8 @@ export interface Worker {
   nativeTeamEnabled?: boolean;
   /** Parent session UUID for native team IPC. */
   parentSessionId?: string;
+  /** ISO timestamp when worker was suspended (pane killed, session preserved). */
+  suspendedAt?: string;
 }
 
 /** Saved spawn configuration for auto-respawn on message delivery. */
@@ -103,6 +106,8 @@ export interface WorkerTemplate {
   nativeTeamEnabled?: boolean;
   /** Timestamp of last spawn from this template. */
   lastSpawnedAt: string;
+  /** Last known Claude session ID for resume capability. */
+  lastSessionId?: string;
 }
 
 export interface WorkerRegistry {

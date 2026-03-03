@@ -691,6 +691,7 @@ export function registerWorkerNamespace(program: Command): void {
             extraArgs: options.extraArgs,
             nativeTeamEnabled: result.worker.nativeTeamEnabled,
             lastSpawnedAt: new Date().toISOString(),
+            lastSessionId: result.worker.claudeSessionId,
           });
 
           console.log(`Worker "${result.workerId}" spawned.`);
@@ -699,6 +700,9 @@ export function registerWorkerNamespace(program: Command): void {
           console.log(`  Pane:     ${result.paneId}`);
           if (options.role) console.log(`  Role:     ${options.role}`);
           if (options.skill) console.log(`  Skill:    ${options.skill}`);
+          if (result.worker.claudeSessionId) {
+            console.log(`  Session:  ${result.worker.claudeSessionId}`);
+          }
           if (result.worker.nativeTeamEnabled) {
             console.log(`  Native:   enabled`);
             console.log(`  AgentID:  ${result.worker.nativeAgentId}`);
@@ -791,6 +795,7 @@ export function registerWorkerNamespace(program: Command): void {
             extraArgs: options.extraArgs,
             nativeTeamEnabled: nt?.enabled ?? false,
             lastSpawnedAt: now,
+            lastSessionId: workerEntry.claudeSessionId,
           });
 
           console.log(`Worker "${workerId}" starting inline...`);
