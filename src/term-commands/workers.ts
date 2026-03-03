@@ -27,6 +27,7 @@ import * as teamManager from '../lib/team-manager.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { spawnWorker, generateWorkerId } from '../lib/worker-spawner.js';
 import * as mailbox from '../lib/mailbox.js';
+import { suspendWorker } from '../lib/idle-timeout.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -843,6 +844,31 @@ export function registerWorkerNamespace(program: Command): void {
         const pruned: string[] = [];
 
         for (const w of workers) {
+          // Suspended workers: show as suspended, prune if expired (>24h)
+          if (w.state === 'suspended') {
+            const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+            const suspendedAge = w.suspendedAt
+              ? Date.now() - new Date(w.suspendedAt).getTime()
+              : Infinity;
+
+            if (options.prune && suspendedAge > SUSPEND_EXPIRY_MS) {
+              // Expired suspended worker — prune registry + template
+              if (w.team && w.nativeAgentId) {
+                const agentName = w.nativeAgentId.split('@')[0];
+                await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
+                await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
+              }
+              if (w.role) await registry.removeTemplate(w.role).catch(() => {});
+              await registry.removeTemplate(w.id).catch(() => {});
+              await registry.unregister(w.id);
+              pruned.push(w.id);
+            } else {
+              const lastMsg = await getLastMessageTime(w);
+              entries.push({ worker: w, liveState: '💤 suspended', lastMsg, dead: false });
+            }
+            continue;
+          }
+
           const paneAlive = await isPaneAlive(w.paneId);
 
           if (paneAlive) {
@@ -1002,6 +1028,38 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
+  // worker suspend
+  worker
+    .command('suspend <id>')
+    .description('Suspend a worker (kill pane, preserve session for resume)')
+    .action(async (id: string) => {
+      try {
+        const w = await registry.get(id);
+        if (!w) {
+          console.error(`Worker "${id}" not found.`);
+          process.exit(1);
+        }
+        if (w.state === 'suspended') {
+          console.log(`Worker "${id}" is already suspended.`);
+          return;
+        }
+        const ok = await suspendWorker(id);
+        if (ok) {
+          console.log(`Worker "${id}" suspended.`);
+          if (w.claudeSessionId) {
+            console.log(`  Session preserved: ${w.claudeSessionId}`);
+          }
+          console.log(`  Send a message to auto-resume: genie msg send ${id} "your message"`);
+        } else {
+          console.error(`Failed to suspend worker "${id}".`);
+          process.exit(1);
+        }
+      } catch (error: any) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
   // worker dashboard
   worker
     .command('dashboard')
@@ -1023,6 +1081,7 @@ export function registerWorkerNamespace(program: Command): void {
               spawning: workers.filter(w => w.state === 'spawning').length,
               working: workers.filter(w => w.state === 'working').length,
               idle: workers.filter(w => w.state === 'idle').length,
+              suspended: workers.filter(w => w.state === 'suspended').length,
               done: workers.filter(w => w.state === 'done').length,
             },
           };
@@ -1064,6 +1123,62 @@ export function registerWorkerNamespace(program: Command): void {
         if (options.watch) {
           console.log('Watch mode: would auto-refresh every 2s (tmux required)');
         }
+      } catch (error: any) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
+  // worker watchdog
+  worker
+    .command('watchdog')
+    .description('Start idle timeout watchdog in a background tmux pane')
+    .option('--inline', 'Run watchdog in current process (blocking)')
+    .action(async (options: { inline?: boolean }) => {
+      try {
+        if (options.inline) {
+          // Run directly in current process (for the tmux pane to execute)
+          const { runWatchdogLoop } = await import('../lib/idle-timeout.js');
+          await runWatchdogLoop();
+          return;
+        }
+
+        // Spawn as a hidden tmux pane
+        if (!process.env.TMUX) {
+          console.error('Error: watchdog requires a tmux session (TMUX env var not set)');
+          process.exit(1);
+        }
+
+        const { exec } = require('child_process');
+        const { promisify } = require('util');
+        const execAsync = promisify(exec);
+
+        // Check if watchdog is already running
+        try {
+          const { stdout: panes } = await execAsync("tmux list-panes -a -F '#{pane_title}' 2>/dev/null");
+          if (panes.includes('genie-watchdog')) {
+            console.log('Watchdog is already running.');
+            return;
+          }
+        } catch { /* no tmux panes — proceed */ }
+
+        // Spawn watchdog using `genie worker watchdog --inline` so it works
+        // from both source (bun src/genie.ts) and bundled (dist/genie.js) paths
+        const { stdout } = await execAsync(
+          `tmux split-window -d -P -F '#{pane_id}' "printf '\\033]2;genie-watchdog\\033\\\\' && genie worker watchdog --inline"`,
+        );
+        const paneId = stdout.trim();
+
+        // Best-effort: resize to minimal height (watchdog is background)
+        try {
+          await execAsync(`tmux resize-pane -t '${paneId}' -y 3`);
+        } catch { /* best-effort */ }
+
+        const { getIdleTimeoutMs } = await import('../lib/idle-timeout.js');
+        console.log(`Watchdog started in pane ${paneId}`);
+        console.log(`  Idle timeout: ${getIdleTimeoutMs() / 1000}s`);
+        console.log(`  Poll interval: 30s`);
+        console.log(`  Set GENIE_IDLE_TIMEOUT_MS to change timeout`);
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
         process.exit(1);
